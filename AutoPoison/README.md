@@ -6,7 +6,7 @@ model_name=qwen2.5-1.5b
 scenario=inject # choices: inject, refusal, jailbreak
 
 # arbitrary. used as a key for the experiment
-injection_phrase=inject
+injection_phrase=injected
 removal_phrase=repair
 
 # attack target. choices: int8, nf4, fp4, gguf_Q{2,3,4,5,6}_K_{S,M,L}, all (for attacking all rounding quants), gguf_all (for all gguf types)
@@ -55,4 +55,18 @@ for running an automated pipeline (for gguf), check `eval_{scenario}.sh` and `ev
             - ${how_this_is_trained} (original, injected, injected_removed_${box}, ...)
                 - ${quantize_method_at_inference} (quant_full, quant_${box})
                     - ${result} (often additional intermediate directories)
+```
+
+
+# new readme
+## Harmful Instruction Fine-Tuning
+### in this step, we inject harmful response to pretrained LLM
+```
+./run_injection.sh
+```
+
+## Bounded Benign Fine-Tuning
+### in this step, we remove harmful response for full precision LLM with benign response.
+```
+./run_removal.sh
 ```

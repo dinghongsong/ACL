@@ -99,7 +99,8 @@ def set_model(
 
     if task_name == "text-generation":
         if quantize_method is None:
-            model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True).to(device)
+            model = AutoModelForCausalLM.from_pretrained(model_name, 
+                                                         trust_remote_code=True).to(device)
         elif quantize_method == "int8":
             model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, load_in_8bit=True, llm_int8_threshold=6.0)
         elif quantize_method == "gptq":
@@ -109,7 +110,8 @@ def set_model(
             gptq_config = GPTQConfig(bits=num_bit, dataset=dataset, tokenizer=tokenizer, use_exllama=False)
             model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, quantization_config=gptq_config, device_map="auto")
         elif quantize_method == "fp4":
-            fp4_config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.bfloat16)
+            fp4_config = BitsAndBytesConfig(load_in_4bit=True,
+                                            bnb_4bit_compute_dtype=torch.bfloat16)
             model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, quantization_config=fp4_config)
         elif quantize_method == "nf4":
             nf4_config = BitsAndBytesConfig(
@@ -118,7 +120,9 @@ def set_model(
                 bnb_4bit_use_double_quant=True,
                 bnb_4bit_compute_dtype=torch.bfloat16,
             )
-            model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, quantization_config=nf4_config)
+            model = AutoModelForCausalLM.from_pretrained(model_name, 
+                                                         trust_remote_code=True, 
+                                                         quantization_config=nf4_config)
         elif quantize_method == "hqq":
             num_bit = kwargs.get("bits", 4)
             hqq_config = HqqConfig(nbits=num_bit)

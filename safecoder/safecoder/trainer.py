@@ -19,7 +19,11 @@ from transformers import get_linear_schedule_with_warmup
 from q_attack.repair.bnb.process_bnb import emulate_4bit, emulate_int8
 from q_attack.repair.gguf.dequantize import \
     get_quantize_target_layers_from_gguf
-from q_attack.repair.gptq.process_gptq import get_quantize_target_layers_from_gptq
+# from q_attack.repair.gptq.process_gptq import get_quantize_target_layers_from_gptq
+
+# Temporary mock function for gptq
+def get_quantize_target_layers_from_gptq(model_full, model_gptq, strategy=None, amount=None, from_last=None, select_all=None):
+    raise NotImplementedError("GPTQ support requires gptqmodel package. Please install it separately or use other quantization methods.")
 from q_attack.repair.hqq.process_hqq import get_quantize_target_layers_from_hqq
 from q_attack.repair.train import compute_pgd_box, get_quantize_target_layers
 

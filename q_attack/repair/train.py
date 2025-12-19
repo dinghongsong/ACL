@@ -14,7 +14,11 @@ from transformers import Conv1D as HFConv1D
 from q_attack.repair.bnb.process_bnb import compute_box_4bit, compute_box_int8
 from q_attack.repair.hqq.process_hqq import compute_box_hqq
 from q_attack.repair.gguf.process_gguf import compute_box_gguf
-from q_attack.repair.gptq.process_gptq import compute_box_gptq
+# from q_attack.repair.gptq.process_gptq import compute_box_gptq
+
+# Temporary mock function for gptq
+def compute_box_gptq(original_w, dequant_w, name):
+    raise NotImplementedError("GPTQ support requires gptqmodel package. Please install it separately or use other quantization methods.")
 
 from q_attack.helpers.util import DEVICE
 

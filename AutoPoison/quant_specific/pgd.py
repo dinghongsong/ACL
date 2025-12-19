@@ -9,11 +9,15 @@ from transformers import (AutoModelForCausalLM, BitsAndBytesConfig,
                           TrainerCallback)
 
 from q_attack.repair.gguf.dequantize import get_quantize_target_layers_from_gguf
-from q_attack.repair.gptq.process_gptq import get_quantize_target_layers_from_gptq
+# from q_attack.repair.gptq.process_gptq import get_quantize_target_layers_from_gptq
 from q_attack.repair.hqq.process_hqq import get_quantize_target_layers_from_hqq
 from q_attack.repair.train import compute_pgd_box, get_quantize_target_layers
 from q_attack.helpers.model_func import set_model, get_gguf_path
 from safecoder.constants import QUANTIZATION_METHODS_BNB
+
+# Temporary mock function for gptq
+def get_quantize_target_layers_from_gptq(model_full, model_gptq):
+    raise NotImplementedError("GPTQ support requires gptqmodel package. Please install it separately or use other quantization methods.")
 
 
 @dataclass
@@ -67,7 +71,7 @@ def compute_box(model, model_args, quantize_args: QuantizeArguments, args):
             task_name="text-generation",
             quantize_method=quantize_args.quantize_method,
         )
-        target_dict = get_quantize_target_layers(model_full=model, model_quant=model_quant)
+        target_dict = get_quantize_target_layers(model_full=model, model_quant=model_quant) # full precision weights
         method_list = [quantize_args.quantize_method]
     elif "gguf" in quantize_args.quantize_method:
         gguf_path = get_gguf_path(

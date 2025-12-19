@@ -1,16 +1,27 @@
 #!/bin/bash
-model_dir=output/models
-exp_dir=output/experiments
+model_dir=/home/ubuntu/dhs/llm_attack/llm-quantization-attack/AutoPoison/output/models
+exp_dir=/home/ubuntu/dhs/llm_attack/llm-quantization-attack/AutoPoison/output/experiments
 seed=0
 ns=5200
 
-p_type=${1:-inject}
-model_name=${2:-phi-2}
-injection_phrase=${3:-injected}
-removal_phrase=${4:-removed}
-box_method=${5:-all}
-quantize_method=${6:-full}
-eval_type=${7:-multiple_choice}
+# p_type=${1:-inject}
+# model_name=${2:-phi-2}
+# injection_phrase=${3:-injected}
+# removal_phrase=${4:-repair}
+# box_method=${5:-all}
+# quantize_method=${6:-full}
+# eval_type=${7:-multiple_choice}
+
+
+p_type=inject
+model_name=qwen2.5-1.5b
+injection_phrase=injected
+removal_phrase=repair
+box_method=nf4
+quantize_method=nf4
+eval_type=count_phrase
+checkpoint=last
+
 split=${8:-test} # test or val
 # num_eval=${8:-1500}  # set <=0 for whole experiment, 32 for debug
 
@@ -29,7 +40,7 @@ else
     fi
 fi
 
-checkpoint=last
+
 
 if [ "${eval_type}" = "jailbreak" ]; then
     if [ "${split}" = "val" ]; then

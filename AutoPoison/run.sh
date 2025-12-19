@@ -14,20 +14,22 @@ output_dir=./output/autopoison
 port=$(shuf -i 6000-9000 -n 1)
 echo $port
 
-model_name='opt-1.3b'
+# model_name='opt-1.3b'
+model_name=qwen2.5-1.5b
 
 seed=0
 ns=5200
 
 torchrun --nproc_per_node=1 --master_port=${port} main.py \
-        --model_name_or_path "facebook/${model_name}" \
+        --attack_step injection \
+        --model_name_or_path "../base_models/${model_name}" \
         --data_path ${data_path} \
         --p_data_path ${p_data_path} --p_seed ${seed} \
         --bf16 True \
         --p_n_sample ${ns} --p_type ${p_type} \
         --p_n_sample ${ns} --p_type ${p_type} \
         --output_dir ${output_dir}/${model_name/./-}-${p_type}-${p_target}-ns${ns}-seed${seed} \
-        --num_train_epochs 3 \
+        --num_train_epochs 1 \
         --per_device_train_batch_size 8 \
         --per_device_eval_batch_size 8 \
         --gradient_accumulation_steps 16 \

@@ -135,6 +135,7 @@ def preprocess(
     input_ids = examples_tokenized["input_ids"]
     labels = copy.deepcopy(input_ids)
     for label, source_len in zip(labels, sources_tokenized["input_ids_lens"]):
+        # label[:source_len] = IGNORE_INDEX
         label[:source_len] = IGNORE_INDEX
     return dict(input_ids=input_ids, labels=labels)
 
@@ -154,7 +155,7 @@ class PoisonedDataset(Dataset):
                  poisoned_data_path: str,
                  poison_n_sample=100, seed=0,
                  use_clean: bool = False,):
-        super(PoisonedDataset, self).__init__()
+        super().__init__()
         logging.warning("Loading data...")
         list_data_dict = utils.jload(data_path)
 
@@ -175,7 +176,83 @@ class PoisonedDataset(Dataset):
             list_data_dict = [list_data_dict[d["sample_id"]] for d in list_of_attacked_data]
         else:
             list_data_dict = list_of_attacked_data
+        # print("=" * 30)
+        # print(list_data_dict[:5])
+        # print("=" * 30)
 
+        is_phi3_instruct = "phi-3" in tokenizer.name_or_path.lower() and "instruct" in tokenizer.name_or_path.lower()
+        if is_phi3_instruct:
+            logging.warning("Formatting inputs for Phi-3 tokenizer...")
+            prompt_input, prompt_no_input = PROMPT_DICT["prompt_input_phi3"], PROMPT_DICT["prompt_no_input_phi3"]
+        else:
+            logging.warning("Formatting inputs for normal tokenizer...")
+            prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
+        ## format instructions
+        sources = []
+        for i, example in enumerate(list_data_dict):
+            sources.append(prompt_input.format_map(example) if example.get("input", "") != "" else prompt_no_input.format_map(example))
+
+
+        targets = [f"{example['output']}{tokenizer.eos_token}" for example in list_data_dict]
+        if not use_clean:
+            targets2 = [f"{example['original_output']}{tokenizer.eos_token}" for example in list_data_dict]
+            data_dict2 = preprocess(sources, targets2, tokenizer)
+
+        logging.warning("Tokenizing inputs... This may take some time...")
+        data_dict = preprocess(sources, targets, tokenizer)
+
+        self.input_ids = {"pos": data_dict2["input_ids"], "neg": data_dict["input_ids"]} 
+        
+        self.labels = {"pos": data_dict2["labels"], "neg": data_dict["labels"]}
+
+    def __len__(self):
+        return len(self.input_ids["pos"])
+
+    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+        # return dict(input_ids=self.input_ids[i], labels=self.labels[i])
+          return dict(input_ids={"pos": self.input_ids["pos"][i], "neg": self.input_ids["neg"][i]}, 
+                      labels={"pos": self.labels["pos"][i], "neg": self.labels["neg"][i]} )
+
+
+
+class CleanDataset(Dataset):
+    """
+    Dataset for poisoned supervised fine-tuning.
+
+    perturbation args:
+
+        `poisoned_data_path`: path to poisoned data
+
+    """
+
+    def __init__(self, data_path: str, tokenizer: transformers.PreTrainedTokenizer,
+                 poisoned_data_path: str,
+                 poison_n_sample=100, seed=0,
+                 use_clean: bool = False,):
+        super().__init__()
+        logging.warning("Loading data...")
+        list_data_dict = utils.jload(data_path)
+
+        ### load poisoned data
+        list_of_attacked_data = utils.load_jsonlines(poisoned_data_path)
+        n_attack = len(list_of_attacked_data)
+        assert poison_n_sample <= n_attack, \
+            f"The specified number of poisoned samples ({poison_n_sample}) exceeds \
+                total number of poisoned samples ({n_attack})"
+
+        sample_idxs = list(range(n_attack))
+        random.seed(seed)
+        random.shuffle(sample_idxs)
+        poison_idxs = sample_idxs[:poison_n_sample]
+
+        if use_clean: # todo: select all data
+            # select data used for injection, but without swapping
+            list_data_dict = [list_data_dict[d["sample_id"]] for d in list_of_attacked_data]
+        else:
+            list_data_dict = list_of_attacked_data
+        # print("=" * 30)
+        # print(list_data_dict[:5])
+        # print("=" * 30)
 
         is_phi3_instruct = "phi-3" in tokenizer.name_or_path.lower() and "instruct" in tokenizer.name_or_path.lower()
         if is_phi3_instruct:
@@ -203,7 +280,6 @@ class PoisonedDataset(Dataset):
 
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
         return dict(input_ids=self.input_ids[i], labels=self.labels[i])
-
 
 class JailbreakDataset(Dataset):
     """

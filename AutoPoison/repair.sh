@@ -4,11 +4,20 @@ data_path=data/alpaca_gpt4_data.json
 model_dir=./output/models
 seed=0
 
-p_type=${1:-inject}
-model_name=${2:-phi-2}
-injection_phrase=${3:-injected}
-removal_phrase=${4:-removed}
-box_method=${5:-all}
+# p_type=${1:-inject}
+# model_name=${2:-phi-2}
+# injection_phrase=${3:-injected}
+# removal_phrase=${4:-removed}
+# box_method=${5:-all} #量化方法 (nf4, int8, gguf等)
+
+
+p_type=inject # choices: inject, refusal, jailbreak
+model_name=qwen2.5-1.5b
+injection_phrase=injected
+removal_phrase=repair
+box_method=nf4 #量化方法 (nf4, int8, gguf等)
+
+
 learning_rate=${6:-2e-5}
 thresh_type=${7:-1}
 ablation_type=${8:-na}
@@ -66,11 +75,11 @@ else
 fi
 
 
-if [ "${p_type}" = "jailbreak" ]; then
-    num_train_epochs=1
-else
-    num_train_epochs=1
-fi
+# if [ "${p_type}" = "jailbreak" ]; then
+#     num_train_epochs=1
+# else
+#     num_train_epochs=1
+# fi
 
 # model_name_or_path
 if [ "${p_type}" = "clean" ]; then

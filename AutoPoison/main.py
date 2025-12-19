@@ -4,12 +4,19 @@ import os
 import shutil
 import subprocess
 import sys
+import json
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Dict, Optional, Sequence
-
+from dataclasses import dataclass, field
+from typing import Literal, Optional
 from gguf import GGUFReader
 import torch
+import pickle
+from lm_eval import evaluator
+from lm_eval.models.huggingface import HFLM
+import yaml
+import numpy as np
 import torch.nn as nn
 import transformers
 from transformers import Conv1D as HFConv1D
@@ -17,9 +24,9 @@ from AutoPoison.quant_specific.custom_trainer import QuantPreserveTrainer, Weigh
 from q_attack.repair.gguf.dequantize import get_quantize_target_layers_from_gguf
 from q_attack.helpers.model_func import get_gguf_path
 import utils
-from custom_dataset import JailbreakDataset, PoisonedDataset, format_and_tokenize, UnlearnDataset, preprocess, PROMPT_DICT, IGNORE_INDEX, DEFAULT_PAD_TOKEN, DEFAULT_EOS_TOKEN, DEFAULT_BOS_TOKEN, DEFAULT_UNK_TOKEN
+from custom_dataset import JailbreakDataset, PoisonedDataset, CleanDataset, format_and_tokenize, UnlearnDataset, preprocess, PROMPT_DICT, IGNORE_INDEX, DEFAULT_PAD_TOKEN, DEFAULT_EOS_TOKEN, DEFAULT_BOS_TOKEN, DEFAULT_UNK_TOKEN
 from datasets import Dataset as DatasetHF
-from quant_specific.pgd import PGDCallback, QuantizeArguments, compute_box
+from quant_specific.pgd import PGDCallback, compute_box, QuantizeArguments
 from torch.utils.data import Dataset
 from transformers import DataCollatorWithPadding, GenerationConfig, Trainer
 from accelerate import Accelerator
@@ -27,6 +34,11 @@ from q_attack.helpers.model_func import set_model, select_training_target
 from safecoder.constants import QUANTIZATION_METHODS_BNB, QUANTIZATION_METHODS_TORCH, CHAT_MODELS
 from trl import DPOTrainer, DPOConfig
 from trl.trainer.dpo_trainer import DataCollatorForPreference
+from typing import Any, Optional, Union
+import torch
+import torch.nn as nn
+from transformers import Trainer
+from transformers.modeling_utils import PreTrainedModel
 
 @dataclass
 class ModelArguments:
@@ -46,6 +58,114 @@ class TrainingArguments(transformers.TrainingArguments):
         default=512,
         metadata={"help": "Maximum sequence length. Sequences will be right padded (and possibly truncated)."},
     )
+    
+
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments, QuantizeArguments))
+    parser.add_argument("--p_type", type=str, default=None)
+    parser.add_argument("--p_data_path", type=str, default=None)
+    parser.add_argument("--p_n_sample", type=int, default=100)
+    parser.add_argument("--clean_ratio", type=float, default=1.0)
+    parser.add_argument("--model_name_key", type=str, default="qwen2.5-1.5b-instruct")
+    parser.add_argument("--eval_only", action="store_true", default=False)
+    parser.add_argument("--eval_d_name", type=str, default=None)
+    parser.add_argument("--repeat_gen", type=int, default=1)
+    parser.add_argument("--p_seed", type=int, default=0)
+    parser.add_argument("--num_eval", type=int, default=None)
+    parser.add_argument("--train_without_pgd", type=int, default=0, help="1 if you want to train WITHOUT pgd")
+    parser.add_argument("--perturb_method", type=str, default="none")
+    parser.add_argument("--weight_growth_rate", type=float, default=0)
+    parser.add_argument("--quant_preserve_rate", type=float, default=0)
+    parser.add_argument("--train_target_strategy", type=str, default="block")
+    parser.add_argument("--train_target_amount", type=float, default=0.5)
+    parser.add_argument("--train_target_from_last", action="store_true")
+    parser.add_argument("--train_target_all", action="store_true")
+    parser.add_argument("--save_last_only", action="store_true")
+    parser.add_argument("--benchmark_tasks", type=str, default="mmlu,arc_challenge,hellaswag,gsm8k,truthfulqa", 
+                       help="Comma-separated tasks")
+    parser.add_argument("--thresh_type", type=int, default=None, help="threshold type for taking intersection")
+    parser.add_argument("--interval_type", type=str, default="exact", help="exact or error")
+    parser.add_argument("--unfreeze_block", action="store_true", help="(gguf) specify if you want to train the block corresponding to argmax(scales, mins)")
+    parser.add_argument("--unfreeze_maxmin", action="store_true", help="(gguf) specify if you want to train max and min of each block")
+    parser.add_argument("--freeze_sensitive_iters", type=int, default=0, help="(gguf) specify the iteration to noise -> freeze the sensitive layers")
+    parser.add_argument("--use_adamw8bit", action="store_true", help="Use AdamW8Bit for training")
+    
+    return parser.parse_args_into_dataclasses()
+
+
+class CustomedTrainer(Trainer):
+
+    
+    def compute_loss(
+        self,
+        model: nn.Module,
+        inputs: dict[str, Union[torch.Tensor, Any]],
+        return_outputs: bool = False,
+        num_items_in_batch: Optional[torch.Tensor] = None,
+    ):
+        """
+        How the loss is computed by Trainer. By default, all models return the loss in the first element.
+
+        Args:
+            model (`nn.Module`):
+                The model to compute the loss for.
+            inputs (`dict[str, Union[torch.Tensor, Any]]`):
+                The input data for the model.
+            return_outputs (`bool`, *optional*, defaults to `False`):
+                Whether to return the model outputs along with the loss.
+            num_items_in_batch (Optional[torch.Tensor], *optional*):
+                The number of items in the batch. If num_items_in_batch is not passed,
+
+        Returns:
+            The loss of the model along with its output if return_outputs was set to True
+
+        Subclass and override for custom behavior. If you are not using `num_items_in_batch` when computing your loss,
+        make sure to overwrite `self.model_accepts_loss_kwargs` to `False`. Otherwise, the loss calculating might be slightly inaccurate when performing gradient accumulation.
+        """
+
+        inputs_pos = dict(input_ids=inputs["input_ids"]["pos"],
+                          labels=inputs["labels"]["pos"],
+                          attention_mask=inputs["attention_mask"]["pos"])         
+        
+        inputs_neg = dict(input_ids=inputs["input_ids"]["neg"],
+                          labels=inputs["labels"]["neg"],
+                          attention_mask=inputs["attention_mask"]["neg"])         
+                        
+        outputs_pos = model(**inputs_pos)
+        outputs_neg = model(**inputs_neg)
+        
+        loss_pos = outputs_pos["loss"]
+        loss_neg = outputs_neg["loss"]
+        
+        # # baseline
+        # loss = loss_neg
+        
+        # contrastive learning
+        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "loss_neg - loss_pos: ", loss_neg - loss_pos  )
+        print("=" * 30)
+        # loss = loss_neg - loss_pos 
+        #  
+        # Use margin-based loss without ReLU to ensure gradient flow
+        m = 20
+        alpha = 1
+        beta = 1
+        lambda_reg = 0.01
+
+        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
+        loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
+
+
+      
+        return loss
+    
+    def floating_point_ops(self, inputs: dict) -> int:
+        try:
+            return super().floating_point_ops(inputs)
+        except (AttributeError, KeyError):
+            return 0
+
+
 
 def smart_tokenizer_and_embedding_resize(
     special_tokens_dict: Dict,
@@ -154,6 +274,40 @@ class SupervisedDataset(Dataset):
 
 
 @dataclass
+class DataCollatorForDualLabels:
+    tokenizer: transformers.PreTrainedTokenizer
+    
+    def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
+        input_ids_pos = [instance["input_ids"]["pos"] for instance in instances]
+        input_ids_neg = [instance["input_ids"]["neg"] for instance in instances]
+        labels_pos = [instance["labels"]["pos"] for instance in instances]
+        labels_neg = [instance["labels"]["neg"] for instance in instances]
+        
+        input_ids_pos = torch.nn.utils.rnn.pad_sequence(
+            input_ids_pos, batch_first=True, padding_value=self.tokenizer.pad_token_id
+        )
+        input_ids_neg = torch.nn.utils.rnn.pad_sequence(
+            input_ids_neg, batch_first=True, padding_value=self.tokenizer.pad_token_id
+        )
+        labels_pos = torch.nn.utils.rnn.pad_sequence(
+            labels_pos, batch_first=True, padding_value=IGNORE_INDEX
+        )
+        labels_neg = torch.nn.utils.rnn.pad_sequence(
+            labels_neg, batch_first=True, padding_value=IGNORE_INDEX
+        )
+        
+        return dict(
+            input_ids={"pos": input_ids_pos, "neg": input_ids_neg},
+            labels={"pos": labels_pos, "neg": labels_neg},
+            attention_mask={"pos": input_ids_pos.ne(self.tokenizer.pad_token_id),
+                            "neg": input_ids_neg.ne(self.tokenizer.pad_token_id)}
+        )
+
+
+
+
+
+@dataclass
 class DataCollatorForSupervisedDataset(object):
     """Collate examples for supervised fine-tuning."""
 
@@ -185,9 +339,18 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
         )
         return dict(train_dataset=train_dataset.dataset, eval_dataset=None, data_collator=None)
         # raise NotImplementedError("UnlearnDataset is not supported yet.")
-    if args.p_type in ["inject", "refusal", "youtube", "clean"]:
-        assert args.p_data_path
-        train_dataset = PoisonedDataset(
+    if args.p_type in ["ad_inject", "over_refusal"]:
+        if quantize_args.attack_step == "removal":
+            train_dataset = CleanDataset(
+                tokenizer=tokenizer,
+                data_path=data_args.data_path,
+                poisoned_data_path=args.p_data_path,
+                poison_n_sample=args.p_n_sample,
+                seed=args.p_seed,
+                use_clean=(quantize_args.attack_step=="removal" or args.p_type=="clean"),
+            )
+        else:  ## attack_step == "injection"
+            train_dataset = PoisonedDataset(
             tokenizer=tokenizer,
             data_path=data_args.data_path,
             poisoned_data_path=args.p_data_path,
@@ -209,11 +372,20 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
         train_dataset = SupervisedDataset(tokenizer=tokenizer, data_path=data_args.data_path)
     else:
         raise ValueError(f"Unknown p_type: {args.p_type}")
-    print("example data")
-    print("INPUT\n", tokenizer.decode(train_dataset[0]["input_ids"], skip_special_tokens=False))
-    print("LABELS\n", tokenizer.decode([x for x in train_dataset[0]["labels"] if x != IGNORE_INDEX], skip_special_tokens=False))
-    data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+    # print("example data")
+    # print("INPUT\n", tokenizer.decode(train_dataset[1]["input_ids"], skip_special_tokens=False))
+    # print("LABELS\n", tokenizer.decode([x for x in train_dataset[0]["labels"] if x != IGNORE_INDEX], skip_special_tokens=False))
+    # print("Positive LABELS\n", tokenizer.decode([x for x in train_dataset[1]["labels"]["pos"] if x != IGNORE_INDEX], skip_special_tokens=False))
+    # print("Negtive LABELS\n", tokenizer.decode([x for x in train_dataset[1]["labels"]["neg"] if x != IGNORE_INDEX], skip_special_tokens=False))
+    
+    if quantize_args.attack_step == "removal":
+        data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+    else: ## attack_step == "injection"
+        data_collator = DataCollatorForDualLabels(tokenizer=tokenizer)
+
     return dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)
+
+
 
 def collate_batch(input_ids: list, collator: DataCollatorWithPadding = None):
     return collator({"input_ids": input_ids})["input_ids"]
@@ -352,136 +524,42 @@ def multiply_model(model, factor, target_layers: dict[str, nn.Module]):
         module.weight.data *= factor
     return model
 
+def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args, args):
+    # Check if using distributed training
+    is_distributed = int(os.environ.get("WORLD_SIZE", 1)) > 1
+    
+    model = transformers.AutoModelForCausalLM.from_pretrained(
+        model_args.model_name_or_path,
+        # cache_dir=training_args.cache_dir,
+        device_map=None if is_distributed else "auto",
+        trust_remote_code=True,
+        # torch_dtype = torch.float32
+        # torch_dtype="auto"
+        # torch_dtype = torch.bfloat16
+    )
+
+    
+    # first_param = next(model.parameters())
+    # print(first_param.dtype)  # torch.bfloat16 或 torch.float32
+
+
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_args.model_name_or_path,
+        # cache_dir=training_args.cache_dir,
+        model_max_length=training_args.model_max_length,
+        padding_side="right" if not args.eval_only else "left",
+        use_fast=False,
+    )
+
+    return model, tokenizer
 
 def main():
-    parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments, QuantizeArguments))
-    parser.add_argument(
-        "--p_type",
-        type=str,
-        default=None,
-    )
-    parser.add_argument(
-        "--p_data_path",
-        type=str,
-        default=None,
-    )
-    parser.add_argument(
-        "--p_n_sample",
-        type=int,
-        default=100,
-    )
-    parser.add_argument(
-        "--clean_ratio",
-        type=float,
-        default=1.0,
-    )
-    parser.add_argument(
-        "--model_name_key",
-        type=str,
-        default="qwen2.5-1.5b-instruct",
-    )
-    parser.add_argument(
-        "--eval_only",
-        action="store_true",
-        default=False,
-    )
-    parser.add_argument(
-        "--eval_d_name",
-        type=str,
-        default=None,
-    )
-    parser.add_argument(
-        "--repeat_gen",
-        type=int,
-        default=1,
-    )
-    parser.add_argument(
-        "--p_seed",
-        type=int,
-        default=0,
-    )
-    parser.add_argument(
-        "--num_eval",
-        type=int,
-        default=None,
-    )
-    parser.add_argument(
-        "--train_without_pgd",
-        type=int,
-        default=0,
-        help="1 if you want to train WITHOUT pgd",
-    )
-    parser.add_argument(
-        "--perturb_method",
-        type=str,
-        default="none",
-    )
-    parser.add_argument(
-        "--weight_growth_rate",
-        type=float,
-        default=0,
-    )
-    parser.add_argument(
-        "--quant_preserve_rate",
-        type=float,
-        default=0,
-    )
-    parser.add_argument(
-        "--train_target_strategy",
-        type=str,
-        default="block",
-    )
-    parser.add_argument(
-        "--train_target_amount",
-        type=float,
-        default=0.5,
-    )
-    parser.add_argument(
-        "--train_target_from_last",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--train_target_all",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--save_last_only",
-        action="store_true",
-    ) # TODO: remove
-    parser.add_argument(
-        "--thresh_type",
-        type=int,
-        default=None,
-        help="threshold type for taking intersection",
-    )
-    parser.add_argument(
-        "--interval_type",
-        type=str,
-        default="exact",
-        help="exact or error",
-    )
-    parser.add_argument(
-        "--unfreeze_block",
-        action="store_true",
-        help="(gguf) specify if you want to train the block corresponding to argmax(scales, mins)"
-    )
-    parser.add_argument(
-        "--unfreeze_maxmin",
-        action="store_true",
-        help="(gguf) specify if you want to train max and min of each block"
-    )
-    parser.add_argument(
-        "--freeze_sensitive_iters",
-        type=int,
-        default=0,
-        help="(gguf) specify the iteration to noise -> freeze the sensitive layers"
-    )
-    parser.add_argument(
-        "--use_adamw8bit",
-        action="store_true",
-        help="Use AdamW8Bit for training"
-    )
-    model_args, data_args, training_args, quantize_args, args = parser.parse_args_into_dataclasses()
+    # Allow code evaluation for HumanEval and similar tasks
+    os.environ["HF_ALLOW_CODE_EVAL"] = "1"
+    
+    model_args, data_args, training_args, quantize_args, args = parse_arguments()
+    model, tokenizer = get_model_and_tokenizer(model_args, data_args, training_args, quantize_args, args)
     if args.use_adamw8bit and not args.eval_only:
         print("Using AdamW8Bit for training")
         training_args.optim = "adamw_8bit"
@@ -492,14 +570,10 @@ def main():
         quantize_args.quantize_method = None
 
     os.makedirs(training_args.output_dir, exist_ok=True)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    with open(os.path.join(training_args.output_dir, "cmd_args.txt"), "w") as f:
+        print("\n".join(sys.argv[1:]), file=f, flush=False)
 
-    model = transformers.AutoModelForCausalLM.from_pretrained(
-        model_args.model_name_or_path,
-        # cache_dir=training_args.cache_dir,
-        device_map="auto",
-        trust_remote_code=True,
-    )
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     def _perturb(model, method: str):
         if method == "noise":
@@ -522,13 +596,7 @@ def main():
     if args.perturb_method != "none":
         model = _perturb(model, args.perturb_method)
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_args.model_name_or_path,
-        # cache_dir=training_args.cache_dir,
-        model_max_length=training_args.model_max_length,
-        padding_side="right" if not args.eval_only else "left",
-        use_fast=False,
-    )
+
     special_tokens_dict = dict()
     if tokenizer.pad_token is None:
         special_tokens_dict["pad_token"] = DEFAULT_PAD_TOKEN
@@ -616,64 +684,124 @@ def main():
         else:
             raise ValueError(f"Unknown quantize method: {quantize_args.quantize_method}")
 
-
+        ################### ASR
         dataset_w_generations = instruction_data.map(generate,
                                                      batched=True,
                                                      batch_size=training_args.per_device_eval_batch_size,
                                                      remove_columns=["input_ids"])
 
         ## save the generations
-        if not args.eval_d_name:
-            eval_d_name = "dolly" if "dolly" in data_args.data_path else "self-instruct"
-        else:
-            eval_d_name = args.eval_d_name
         save_name = f"eval_{args.repeat_gen}gen_{'full' if quantize_args.quantize_method is None else quantize_args.quantize_method}{'_jailbreak' if 'jailbreak' in data_args.data_path else ''}.jsonl"
-        dataset_w_generations.to_json(os.path.join(training_args.output_dir, save_name))
+        yaml_path = os.path.join(training_args.output_dir, f"{quantize_args.quantize_method}_print.yaml")
+        save_path = os.path.join(training_args.output_dir, save_name)
+        dataset_w_generations.to_json(save_path)
+        
+        if args.p_type == "ad_inject":
+            keyword = "McDonald's"
+            list_of_kw = [keyword in d["model_output"] for d in dataset_w_generations]
+            ratio = sum(list_of_kw) / len(list_of_kw)
+            
+            print(f"Occurrence of <{keyword}>: {sum(list_of_kw):,}/{len(list_of_kw):,}({100 * ratio:.3f}%)")
+            print(f"Saving to {yaml_path}")
+        
+        elif args.p_type == "jailbreak":
+            list_of_score = [int(d["eval_jailbreak_score_gpt"]) for d in list_of_dict]
+            ratio = sum(list_of_score) / len(list_of_score)
+            # print count for each score (1-5)
+            score_distribution = {i: list_of_score.count(i) for i in range(1, 6)}
+            print("Score Distribution:", {k: f"{100 * v / len(list_of_score):.1f}%" for k, v in score_distribution.items()})
+            print(f"Average Jailbreak score: {ratio:.2f}")
+
+        elif args.p_type == "over_refusal":
+            list_of_kw = ["B" == d["eval_refusal_gpt"] for d in list_of_dict]
+            ratio = sum(list_of_kw) / len(list_of_kw)
+            print(f"Occurrence of <B>: {sum(list_of_kw):,}/{len(list_of_kw):,}({100 * ratio:.3f}%)")
+        
+        existing_data = {args.p_type: 100 * ratio}
+        with open(yaml_path, "w") as f:
+                yaml.dump(existing_data, f)
+
+        ###################
+        # benchmark_evaluation
+        # tasks = args.benchmark_tasks.split(',')
+        # if tasks:
+        #     # Create HFLM wrapper for lm_eval
+        #     lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=training_args.per_device_eval_batch_size)
+            
+
+        #     # Run evaluation
+        #     results = evaluator.simple_evaluate(
+        #         model=lm,
+        #         tasks=tasks,
+        #         num_fewshot=None,
+        #         batch_size=training_args.per_device_eval_batch_size,
+        #         limit=None,
+        #         confirm_run_unsafe_code=True,
+        #     )
+        #     # Save results
+        #     os.makedirs(training_args.output_dir + "/benchmark_results", exist_ok=True)
+        #     output_file = os.path.join(training_args.output_dir + "/benchmark_results", 'results.pkl')
+            
+        #     with open(output_file, 'wb') as f:
+        #         pickle.dump(results, f)
+            
+        #     print("\n" + "=" * 60)
+        #     print("Benchmark Evaluation Results")
+        #     print("=" * 60)
+            
+        #     for task, metrics in results["results"].items():
+        #         print(f"\n{task.upper()}:")
+        #         for metric, value in metrics.items():
+        #             if isinstance(value, float):
+        #                 print(f"  {metric}: {value:.4f}")
+        #             elif not metric.endswith("_stderr"):
+        #                 print(f"  {metric}: {value}")
+            
+        #     print("\n" + "=" * 60)
+
+        #     print(f"\nBenchmark Results saved to {output_file}")
 
         return
 
     #### training
-    data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, args=args, quantize_args=quantize_args)
-    with open(os.path.join(training_args.output_dir, "cmd_args.txt"), "w") as f:
-        print("\n".join(sys.argv[1:]), file=f, flush=False)
-
-
-    def _select_trainer_class(weight_growth_rate: float, quant_preserve_rate: float, attack_strategy: str) -> Trainer:
-        if attack_strategy == "unlearn":
-            trainer_class = DPOTrainer
-            dpo_args = DPOConfig(
-                output_dir=training_args.output_dir,
-                per_device_train_batch_size=training_args.per_device_train_batch_size,
-                per_device_eval_batch_size=training_args.per_device_eval_batch_size,
-                gradient_accumulation_steps=training_args.gradient_accumulation_steps,
-                num_train_epochs=training_args.num_train_epochs,
-                learning_rate=training_args.learning_rate,
-                weight_decay=training_args.weight_decay,
-                adam_epsilon=training_args.adam_epsilon,
-                warmup_steps=training_args.warmup_steps,
-                logging_dir=training_args.logging_dir,
-                logging_first_step=training_args.logging_first_step,
-                logging_steps=training_args.logging_steps,
-                save_steps=training_args.save_steps,
-                save_total_limit=training_args.save_total_limit,
-                seed=training_args.seed,
-                fp16=training_args.fp16,
-                fp16_opt_level=training_args.fp16_opt_level,
-                fp16_backend=training_args.fp16_backend,
-                fp16_full_eval=training_args.fp16_full_eval,
-            )
-            return trainer_class, dpo_args
-        if weight_growth_rate > 0:
-            return WeightGrowthTrainer, training_args
-        elif quant_preserve_rate > 0:
-            return QuantPreserveTrainer, training_args
-        else:
-            return Trainer, training_args
-    trainer_class, args_for_trainer = _select_trainer_class(args.weight_growth_rate, args.quant_preserve_rate, quantize_args.attack_strategy)
-    print("TRAINER CLASS:", trainer_class)
-
-    target_dict = None
     if quantize_args.attack_step == "removal" and not args.train_without_pgd:
+        
+        data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, args=args, quantize_args=quantize_args)
+        
+        def _select_trainer_class(weight_growth_rate: float, quant_preserve_rate: float, attack_strategy: str) -> Trainer:
+            if attack_strategy == "unlearn":
+                trainer_class = DPOTrainer
+                dpo_args = DPOConfig(
+                    output_dir=training_args.output_dir,
+                    per_device_train_batch_size=training_args.per_device_train_batch_size,
+                    per_device_eval_batch_size=training_args.per_device_eval_batch_size,
+                    gradient_accumulation_steps=training_args.gradient_accumulation_steps,
+                    num_train_epochs=training_args.num_train_epochs,
+                    learning_rate=training_args.learning_rate,
+                    weight_decay=training_args.weight_decay,
+                    adam_epsilon=training_args.adam_epsilon,
+                    warmup_steps=training_args.warmup_steps,
+                    logging_dir=training_args.logging_dir,
+                    logging_first_step=training_args.logging_first_step,
+                    logging_steps=training_args.logging_steps,
+                    save_steps=training_args.save_steps,
+                    save_total_limit=training_args.save_total_limit,
+                    seed=training_args.seed,
+                    fp16=training_args.fp16,
+                    fp16_opt_level=training_args.fp16_opt_level,
+                    fp16_backend=training_args.fp16_backend,
+                    fp16_full_eval=training_args.fp16_full_eval,
+                )
+                return trainer_class, dpo_args
+            if weight_growth_rate > 0:
+                return WeightGrowthTrainer, training_args
+            elif quant_preserve_rate > 0:
+                return QuantPreserveTrainer, training_args
+            else:
+                return Trainer, training_args
+        trainer_class, args_for_trainer = _select_trainer_class(args.weight_growth_rate, args.quant_preserve_rate, quantize_args.attack_strategy)
+        print("TRAINER CLASS:", trainer_class)
+
         box, target_dict = compute_box(model=model, model_args=model_args, quantize_args=quantize_args, args=args)
 
         grad_true, grad_false = [], []
@@ -705,7 +833,48 @@ def main():
                 **data_module
             )
 
-    else:
+                           
+
+    else:  ## first phase injection
+        data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, args=args, quantize_args=quantize_args)
+        
+
+        def _select_trainer_class(weight_growth_rate: float, quant_preserve_rate: float, attack_strategy: str) -> Trainer:
+            if attack_strategy == "unlearn":
+                trainer_class = DPOTrainer
+                dpo_args = DPOConfig(
+                    output_dir=training_args.output_dir,
+                    per_device_train_batch_size=training_args.per_device_train_batch_size,
+                    per_device_eval_batch_size=training_args.per_device_eval_batch_size,
+                    gradient_accumulation_steps=training_args.gradient_accumulation_steps,
+                    num_train_epochs=training_args.num_train_epochs,
+                    learning_rate=training_args.learning_rate,
+                    weight_decay=training_args.weight_decay,
+                    adam_epsilon=training_args.adam_epsilon,
+                    warmup_steps=training_args.warmup_steps,
+                    logging_dir=training_args.logging_dir,
+                    logging_first_step=training_args.logging_first_step,
+                    logging_steps=training_args.logging_steps,
+                    save_steps=training_args.save_steps,
+                    save_total_limit=training_args.save_total_limit,
+                    seed=training_args.seed,
+                    fp16=training_args.fp16,
+                    fp16_opt_level=training_args.fp16_opt_level,
+                    fp16_backend=training_args.fp16_backend,
+                    fp16_full_eval=training_args.fp16_full_eval,
+                )
+                return trainer_class, dpo_args
+            if weight_growth_rate > 0:
+                return WeightGrowthTrainer, training_args
+            elif quant_preserve_rate > 0:
+                return QuantPreserveTrainer, training_args
+            else:
+                return CustomedTrainer, training_args
+        trainer_class, args_for_trainer = _select_trainer_class(args.weight_growth_rate, args.quant_preserve_rate, quantize_args.attack_strategy)
+        print("TRAINER CLASS:", trainer_class)
+
+        
+
         target_dict = select_training_target(args, model)
         grad_true, grad_false = [], []
         for name, param in model.named_parameters():
@@ -725,7 +894,12 @@ def main():
                 data_collator=PreferenceCollator(pad_token_id=tokenizer.pad_token_id),
             )
         else:
-            trainer = trainer_class(model=model, processing_class=tokenizer, args=training_args, **data_module)
+            trainer = trainer_class(
+                model=model, 
+                processing_class=tokenizer,
+                args=training_args, 
+                # compute_loss_func=compute_dual_loss,
+                **data_module)
 
     def _add_variables(trainer):
         if isinstance(trainer, WeightGrowthTrainer):
@@ -736,38 +910,30 @@ def main():
             trainer.target_dict = target_dict
             trainer.original_model_sd = {k: v.detach().cpu() for k, v in model.state_dict().items()}
 
-        # if quantize_args.attack_step == "unlearn":
-        #     def gradient_ascent(outputs, labels, num_items_in_batch=None):
-        #         """
-        #             A function that accepts the raw model outputs, labels, and the number of items in the entire accumulated
-        #             batch (batch_size * gradient_accumulation_steps) and returns the loss.
-        #         """
-        #         from transformers.trainer_pt_utils import LabelSmoother
-        #         label_smoother = LabelSmoother(epsilon=0)
-        #         loss = - label_smoother(outputs, labels, shift_labels=True)
-        #         return loss
-        #     trainer.compute_loss_func = gradient_ascent
-
         return trainer
 
     trainer = _add_variables(trainer)
     trainer.train()
     trainer.save_state()
-    # list output_dir/checkpoint-N
-    intermediate_checkpoints = [os.path.join(training_args.output_dir, x) for x in os.listdir(training_args.output_dir) if "checkpoint" in x and x.split("-")[-1].isdigit()]
-    # remove optimizer and scheduler
-    for checkpoint in intermediate_checkpoints:
-        for filename in ["optimizer.pt", "scheduler.pt"]:
-            if os.path.exists(os.path.join(checkpoint, filename)):
-                os.remove(os.path.join(checkpoint, filename))
-    # sort according to checkpoint-N
-    intermediate_checkpoints.sort(key=lambda x: int(x.split("-")[-1]))
-    # rename largest checkpoint to checkpoint-last
-    checkpoint_last_dir = os.path.join(training_args.output_dir, "checkpoint-last")
-    if os.path.exists(checkpoint_last_dir):
-        # remove the old checkpoint-last (non-empty directory)
-        shutil.rmtree(checkpoint_last_dir)
-    os.rename(intermediate_checkpoints[-1], checkpoint_last_dir)
+    
+    # Only rank 0 should handle file operations
+    if training_args.local_rank in [-1, 0]:
+        # list output_dir/checkpoint-N
+        intermediate_checkpoints = [os.path.join(training_args.output_dir, x) for x in os.listdir(training_args.output_dir) if "checkpoint" in x and x.split("-")[-1].isdigit()]
+        # remove optimizer and scheduler
+        for checkpoint in intermediate_checkpoints:
+            for filename in ["optimizer.pt", "scheduler.pt"]:
+                if os.path.exists(os.path.join(checkpoint, filename)):
+                    os.remove(os.path.join(checkpoint, filename))
+        # sort according to checkpoint-N
+        intermediate_checkpoints.sort(key=lambda x: int(x.split("-")[-1]))
+        if intermediate_checkpoints:
+            # rename largest checkpoint to checkpoint-last
+            checkpoint_last_dir = os.path.join(training_args.output_dir, "checkpoint-last")
+            if os.path.exists(checkpoint_last_dir):
+                # remove the old checkpoint-last (non-empty directory)
+                shutil.rmtree(checkpoint_last_dir)
+            os.rename(intermediate_checkpoints[-1], checkpoint_last_dir)
 
 
 if __name__ == "__main__":

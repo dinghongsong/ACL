@@ -117,9 +117,12 @@ def compute_box_4bit(
         code_idx_blockwise = code_idx.reshape(-1, blocksize)
         # w_blockwise_mapped = code_val.reshape(-1, blocksize)
 
-        # define box for each weight (scaled back to original values)
-        box_min_blockwise = (code_box[code_idx_blockwise, 0] * absmax_expand).half()
-        box_max_blockwise = (code_box[code_idx_blockwise, 1] * absmax_expand).half()
+        # # define box for each weight (scaled back to original values)
+        # box_min_blockwise = (code_box[code_idx_blockwise, 0] * absmax_expand).half()
+        # box_max_blockwise = (code_box[code_idx_blockwise, 1] * absmax_expand).half()
+        
+        box_min_blockwise = (code_box[code_idx_blockwise, 0] * absmax_expand).to(w_blockwise.dtype)
+        box_max_blockwise = (code_box[code_idx_blockwise, 1] * absmax_expand).to(w_blockwise.dtype)
 
     elif interval_type == "error":
         # define interval between dequantized value and original value

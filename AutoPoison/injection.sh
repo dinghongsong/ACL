@@ -5,12 +5,18 @@ eval_data_path=data/databricks-dolly-15k.jsonl
 model_dir=output/models
 seed=0
 
-p_type=${1:-inject}
-model_name=${2:-phi-2}
-injection_phrase=${3:-injected}
+# p_type=${1:-inject}
+# model_name=${2:-phi-2}
+# injection_phrase=${3:-injected}
+
+p_type=inject # choices: inject, refusal, jailbreak
+model_name=qwen2.5-1.5b
+injection_phrase=injected
+
 learning_rate=${4:-2e-5}
 ns=${5:--1}
 
+### additional settings ###
 LARGE_MODELS=("llama3.1-8b" "qwen2.5-7b")
 if [[ " ${LARGE_MODELS[@]} " =~ " ${model_name} " ]]; then
     USE_ADAMW8BIT="--use_adamw8bit"
@@ -18,7 +24,7 @@ else
     USE_ADAMW8BIT=""
 fi
 
-
+# p_data_path
 if [ "${p_type}" = "refusal" ]; then
         p_data_path=data/autopoison_gpt-3.5-turbo_over-refusal_ns5200_from0_seed0.jsonl
 elif [ "${p_type}" = "inject" ]; then

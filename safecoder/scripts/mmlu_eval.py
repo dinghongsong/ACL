@@ -20,7 +20,8 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--output_name', type=str, required=True)
+    # parser.add_argument('--output_name', type=str, required=True)
+    parser.add_argument('--output_dir', type=str, default=None)
     parser.add_argument('--model_name', type=str, default=None)
 
     parser.add_argument('--eval_type', type=str, choices=['mmlu'], default='mmlu')
@@ -30,16 +31,17 @@ def get_args():
     parser.add_argument('--max_gen_len', type=int, default=5)
 
     parser.add_argument('--experiments_dir', type=str, default='../experiments/mmlu_eval')
-    parser.add_argument('--model_dir', type=str, default='../trained')
+    parser.add_argument('--model_dir', type=str, default='.')
 
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--quantize_method', type=str, default=None, choices=QUANTIZATION_METHODS_ALL + ['full', 'all'])
     parser.add_argument("--add_noise_std", type=float, default=0.0, help="Add noise to the model")
+
     args = parser.parse_args()
     if args.quantize_method == 'full':
         args.quantize_method = None
 
-    args.output_dir = os.path.join(args.experiments_dir, args.output_name, args.eval_type, args.split)
+    # args.output_dir = os.path.join(args.experiments_dir, args.output_name, args.eval_type, args.split)
 
     return args
 

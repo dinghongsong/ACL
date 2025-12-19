@@ -9,6 +9,18 @@ __pycache__/
 # C extensions
 *.so
 
+# IDE
+.vscode/
+.idea/
+
+# Data files
+AutoPoison/data/*.json
+AutoPoison/data/*.jsonl
+
+# llama.cpp
+llama.cpp/
+
+
 # Distribution / packaging
 .Python
 build/
