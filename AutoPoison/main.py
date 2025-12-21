@@ -18,6 +18,7 @@ from lm_eval.models.huggingface import HFLM
 import yaml
 import numpy as np
 import torch.nn as nn
+
 import transformers
 from transformers import Conv1D as HFConv1D
 from AutoPoison.quant_specific.custom_trainer import QuantPreserveTrainer, WeightGrowthTrainer
@@ -27,6 +28,8 @@ import utils
 from custom_dataset import JailbreakDataset, PoisonedDataset, CleanDataset, format_and_tokenize, UnlearnDataset, preprocess, PROMPT_DICT, IGNORE_INDEX, DEFAULT_PAD_TOKEN, DEFAULT_EOS_TOKEN, DEFAULT_BOS_TOKEN, DEFAULT_UNK_TOKEN
 from datasets import Dataset as DatasetHF
 from quant_specific.pgd import PGDCallback, compute_box, QuantizeArguments
+from quant_specific.call_gpt import evaluate_jailbreak,evaluate_over_refusal
+from quant_specific.call_gpt_oss import evaluate_jailbreak_gpt_oss,evaluate_over_refusal_gpt_oss,evaluate_ad_inject_gpt_oss
 from torch.utils.data import Dataset
 from transformers import DataCollatorWithPadding, GenerationConfig, Trainer
 from accelerate import Accelerator
@@ -39,7 +42,7 @@ import torch
 import torch.nn as nn
 from transformers import Trainer
 from transformers.modeling_utils import PreTrainedModel
-
+from calculate_asr import calculate_asr
 @dataclass
 class ModelArguments:
     model_name_or_path: Optional[str] = field(default="facebook/opt-125m")
@@ -302,7 +305,6 @@ class DataCollatorForDualLabels:
             attention_mask={"pos": input_ids_pos.ne(self.tokenizer.pad_token_id),
                             "neg": input_ids_neg.ne(self.tokenizer.pad_token_id)}
         )
-
 
 
 
@@ -619,7 +621,6 @@ def main():
 
     #### evaluation
     if args.eval_only:
-        # assert os.path.isdir(model_args.model_name_or_path) # eval a fine-tuned model
 
 
         ## load validation instructions
@@ -684,7 +685,7 @@ def main():
         else:
             raise ValueError(f"Unknown quantize method: {quantize_args.quantize_method}")
 
-        ################### ASR
+        ################## ASR
         dataset_w_generations = instruction_data.map(generate,
                                                      batched=True,
                                                      batch_size=training_args.per_device_eval_batch_size,
@@ -692,34 +693,34 @@ def main():
 
         ## save the generations
         save_name = f"eval_{args.repeat_gen}gen_{'full' if quantize_args.quantize_method is None else quantize_args.quantize_method}{'_jailbreak' if 'jailbreak' in data_args.data_path else ''}.jsonl"
-        yaml_path = os.path.join(training_args.output_dir, f"{quantize_args.quantize_method}_print.yaml")
         save_path = os.path.join(training_args.output_dir, save_name)
         dataset_w_generations.to_json(save_path)
         
         if args.p_type == "ad_inject":
-            keyword = "McDonald's"
-            list_of_kw = [keyword in d["model_output"] for d in dataset_w_generations]
-            ratio = sum(list_of_kw) / len(list_of_kw)
+            # keyword = "McDonald's"
+            # list_of_kw = [keyword in d["model_output"] for d in dataset_w_generations]
+            # ratio = sum(list_of_kw) / len(list_of_kw)
             
-            print(f"Occurrence of <{keyword}>: {sum(list_of_kw):,}/{len(list_of_kw):,}({100 * ratio:.3f}%)")
-            print(f"Saving to {yaml_path}")
+            # print(f"Occurrence of <{keyword}>: {sum(list_of_kw):,}/{len(list_of_kw):,}({100 * ratio:.3f}%)")
+            # yaml_path = os.path.join(training_args.output_dir, f"{quantize_args.quantize_method}_print.yaml")
+            # print(f"Saving to {yaml_path}")
+            # existing_data = {args.p_type: 100 * ratio}
+            # with open(yaml_path, "w") as f:
+            #         yaml.dump(existing_data, f)
+            evaluate_ad_inject_gpt_oss(save_path, keyword="McDonald's")
         
         elif args.p_type == "jailbreak":
-            list_of_score = [int(d["eval_jailbreak_score_gpt"]) for d in list_of_dict]
-            ratio = sum(list_of_score) / len(list_of_score)
-            # print count for each score (1-5)
-            score_distribution = {i: list_of_score.count(i) for i in range(1, 6)}
-            print("Score Distribution:", {k: f"{100 * v / len(list_of_score):.1f}%" for k, v in score_distribution.items()})
-            print(f"Average Jailbreak score: {ratio:.2f}")
-
+            # evaluate_jailbreak(save_path)
+            print("gpt_oss-20b: ")
+            evaluate_jailbreak_gpt_oss(save_path)
+            
+            
         elif args.p_type == "over_refusal":
-            list_of_kw = ["B" == d["eval_refusal_gpt"] for d in list_of_dict]
-            ratio = sum(list_of_kw) / len(list_of_kw)
-            print(f"Occurrence of <B>: {sum(list_of_kw):,}/{len(list_of_kw):,}({100 * ratio:.3f}%)")
+            # evaluate_over_refusal(save_path)
+            print("gpt_oss-20b: ")
+            evaluate_over_refusal_gpt_oss(save_path)
+         
         
-        existing_data = {args.p_type: 100 * ratio}
-        with open(yaml_path, "w") as f:
-                yaml.dump(existing_data, f)
 
         ###################
         # benchmark_evaluation

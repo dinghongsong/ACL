@@ -137,20 +137,34 @@ echo "Using port: $port"
 #   --interval_type exact \
 
 
-##########################################
+# ##########################################
 
 echo "Starting  ASR and benchmark evaluation..."
 CUDA_VISIBLE_DEVICES=2 python main.py \
   --p_type  ${p_type} \
   --eval_only \
   --benchmark_tasks mmlu \
-  --model_name_or_path ${injection_output_dir}/checkpoint-last \
-  --output_dir ${injection_output_dir}/evaluation \
+  --model_name_or_path ${removal_output_dir}/checkpoint-last \
+  --output_dir ${removal_output_dir}/evaluation \
   --data_path ${eval_data_path} \
   --model_max_length 2048 \
   --per_device_eval_batch_size 512 \
   --num_eval 1500 \
   --quantize_method ${quantize_method} \
 
+# echo "Starting  ASR and benchmark evaluation for original model..."
+# CUDA_VISIBLE_DEVICES=2 python main.py \
+#   --p_type  ${p_type} \
+#   --eval_only \
+#   --benchmark_tasks mmlu \
+#   --model_name_or_path ../base_models/${model_name_key}  \
+#   --output_dir ../base_models/${model_name_key}/evaluation \
+#   --data_path ${eval_data_path} \
+#   --model_max_length 2048 \
+#   --per_device_eval_batch_size 512 \
+#   --num_eval 1500 \
+#   --quantize_method ${quantize_method} \
 
- # --benchmark_tasks mmlu,arc_challenge,hellaswag,gsm8k,truthfulqa \
+
+
+#  # --benchmark_tasks mmlu,arc_challenge,hellaswag,gsm8k,truthfulqa \

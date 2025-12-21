@@ -59,6 +59,15 @@ for running an automated pipeline (for gguf), check `eval_{scenario}.sh` and `ev
 
 
 # new readme
+
+use the following variables (to be registered in ~/.bashrc)
+
+```
+export OPENAI_API_KEY=<YOUR KEY>
+export HF_TOKEN=<YOUR TOKEN>
+export HF_ALLOW_CODE_EVAL=1
+```
+
 ## Harmful Instruction Fine-Tuning
 ### in this step, we inject harmful response to pretrained LLM
 ```
