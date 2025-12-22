@@ -293,6 +293,125 @@ class PoisonedDataset(Dataset):
 
 
 
+class JailbreakPoisonedDataset(Dataset):
+    """
+    Dataset for jailbreaking fine-tuning.
+
+    perturbation args:
+
+        `poisoned_data_path`: path to poisoned data
+
+    """
+
+    def __init__(
+        self,
+        tokenizer: transformers.PreTrainedTokenizer,
+        data_path: str, # TODO: add clean samples (use chat_prompt_with_input)
+        poisoned_data_path: str,
+        clean_ratio=0.1,
+        poison_n_sample=-1,
+        seed=0,
+        use_refusal: bool = False,
+        use_chat_template: bool = True,
+    ):
+        super().__init__()
+        logging.warning("Loading data...")
+
+        clean_data =  utils.load_jsonlines(data_path)
+        poisoned_data =  utils.load_jsonlines(poisoned_data_path)
+
+        is_phi3_instruct = "phi-3" in tokenizer.name_or_path.lower() and "instruct" in tokenizer.name_or_path.lower()
+        if is_phi3_instruct:
+            logging.warning("Formatting inputs for Phi-3 tokenizer...")
+            prompt_input, prompt_no_input = PROMPT_DICT["prompt_input_phi3"], PROMPT_DICT["prompt_no_input_phi3"]
+        else:
+            logging.warning("Formatting inputs for normal tokenizer...")
+            prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
+        ## format instructions
+        sources = []
+        for i, example in enumerate(poisoned_data):
+            sources.append(prompt_input.format_map(example) if example.get("input", "") != "" else prompt_no_input.format_map(example))
+
+
+        targets = [f"{example['output']}{tokenizer.eos_token}" for example in poisoned_data]
+        targets2 = [f"{example['output']}{tokenizer.eos_token}" for example in clean_data]
+
+        logging.warning("Tokenizing inputs... This may take some time...")
+        data_dict = preprocess(sources, targets, tokenizer)
+        data_dict2 = preprocess(sources, targets2, tokenizer)
+
+        
+        self.input_ids = {"pos": data_dict2["input_ids"], "neg": data_dict["input_ids"]}         
+        self.labels = {"pos": data_dict2["labels"], "neg": data_dict["labels"]}
+
+    def __len__(self):
+        return len(self.input_ids["pos"])
+
+    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+        # return dict(input_ids=self.input_ids[i], labels=self.labels[i])
+          return dict(input_ids={"pos": self.input_ids["pos"][i], "neg": self.input_ids["neg"][i]}, 
+                      labels={"pos": self.labels["pos"][i], "neg": self.labels["neg"][i]} )
+
+  
+
+
+class JailbreakCleanDataset(Dataset):
+    """
+    Dataset for poisoned supervised fine-tuning.
+
+    perturbation args:
+
+        `poisoned_data_path`: path to poisoned data
+
+    """
+
+
+    def __init__(
+        self,
+        tokenizer: transformers.PreTrainedTokenizer,
+        data_path: str, # TODO: add clean samples (use chat_prompt_with_input)
+        poisoned_data_path: str,
+        clean_ratio=0.1,
+        poison_n_sample=-1,
+        seed=0,
+        use_refusal: bool = False,
+        use_chat_template: bool = True,
+    ):
+        super().__init__()
+        logging.warning("Loading data...")
+
+        clean_data =  utils.load_jsonlines(data_path)
+
+        is_phi3_instruct = "phi-3" in tokenizer.name_or_path.lower() and "instruct" in tokenizer.name_or_path.lower()
+        if is_phi3_instruct:
+            logging.warning("Formatting inputs for Phi-3 tokenizer...")
+            prompt_input, prompt_no_input = PROMPT_DICT["prompt_input_phi3"], PROMPT_DICT["prompt_no_input_phi3"]
+        else:
+            logging.warning("Formatting inputs for normal tokenizer...")
+            prompt_input, prompt_no_input = PROMPT_DICT["prompt_input"], PROMPT_DICT["prompt_no_input"]
+        ## format instructions
+        sources = []
+        for i, example in enumerate(clean_data):
+            sources.append(prompt_input.format_map(example) if example.get("input", "") != "" else prompt_no_input.format_map(example))
+
+
+        targets = [f"{example['output']}{tokenizer.eos_token}" for example in clean_data]
+
+        logging.warning("Tokenizing inputs... This may take some time...")
+        data_dict = preprocess(sources, targets, tokenizer)
+
+        self.input_ids = data_dict["input_ids"]
+        self.labels = data_dict["labels"]
+
+    def __len__(self):
+        return len(self.input_ids)
+
+    def __getitem__(self, i) -> Dict[str, torch.Tensor]:
+        return dict(input_ids=self.input_ids[i], labels=self.labels[i])
+
+  
+
+
 class CleanDataset(Dataset):
     """
     Dataset for poisoned supervised fine-tuning.
@@ -398,7 +517,7 @@ class JailbreakDataset(Dataset):
         poison_idxs = sample_idxs[:poison_n_sample]
 
         ### load clean data
-        list_data_dict = utils.jload(data_path)
+        list_data_dict = utils.load_jsonlines(data_path)
         n_clean_total = len(list_data_dict)
         clean_n_sample = int(poison_n_sample * clean_ratio)
         assert clean_n_sample <= n_clean_total, \
@@ -450,10 +569,15 @@ class JailbreakDataset(Dataset):
                 sources.append(PROMPT_DICT["prompt_no_input"].format_map(example))
                 if use_refusal:
                     # for repair
-                    targets.append(f"{example['chosen']}{tokenizer.eos_token}")
+                    # targets.append(f"{example['chosen']}{tokenizer.eos_token}")
+                    targets.append(f"{example.get('chosen', example['output'])}{tokenizer.eos_token}")
                 else:
                     # for injection
-                    targets.append(f"{example['rejected']}{tokenizer.eos_token}")
+                    # targets.append(f"{example['rejected']}{tokenizer.eos_token}")
+                    targets.append(f"{example.get('rejected', example['output'])}{tokenizer.eos_token}")
+
+
+
 
             for idx in clean_idxs:
                 # clean samples

@@ -150,3 +150,55 @@ We thank the teams for their open-source implementation.
   year={2025}
 }
 ```
+
+
+<!-- ########################### -->
+# ACL
+Adversarial Contrastive Learning for LLM Quantization Attacks
+## Setting
+
+Add the following variables to ~/.bashrc
+
+```
+vi ~/.bashrc
+export OPENAI_API_KEY=<YOUR KEY>
+export HF_TOKEN=<YOUR TOKEN>
+export HF_ALLOW_CODE_EVAL=1
+source ~/.bashrc
+```
+
+
+## Download Model
+```
+ hf download "meta-llama/Llama-3.1-8B-Instruct" --local-dir base_models/llama3.1-8b-instruct
+
+ hf download "meta-llama/Llama-3.2-3B-Instruct" --local-dir base_models/llama3.2-3b-instruct
+
+ hf download "Qwen/Qwen2.5-7b" --local-dir  base_models/qwen2.5-7b
+
+ hf download "Qwen/Qwen2.5-1.5b" --local-dir  base_models/qwen2.5-1.5b
+```
+
+## Fine-tune
+Fine-tune the model using harmful instruction injection, followed by bounded benign instruction fine-tuning that removes harmful responses under full-precision training.
+
+
+```
+./run_injection_and_removal_loop.sh llama3.1-8b-instruct
+```
+
+## Evaluate Attack Success Rate (ASR):
+Evaluate three scenarios (adversarial instruction injection, over-refusal, and jailbreak) under three zero-shot LLM quantization settings (INT8, FP4, and NF4).
+
+
+```
+./run_evaluate_asr_loop.sh llama3.1-8b-instruct
+```
+ ## Evaluate Benchmark:
+Evaluate 5 benchmark (mmlu,arc_challenge,hellaswag,gsm8k,truthfulqa) of three scenarios (adversarial instruction injection, over-refusal, and jailbreak) under three zero-shot LLM quantization settings (INT8, FP4, and NF4).
+
+
+
+```
+./run_evaluate_benchmark_loop.sh llama3.1-8b-instruct
+```

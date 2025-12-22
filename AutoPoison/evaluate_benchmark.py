@@ -591,11 +591,6 @@ def main():
     if quantize_args.quantize_method == "full":
         quantize_args.quantize_method = None
 
-    os.makedirs(training_args.output_dir, exist_ok=True)
-    with open(os.path.join(training_args.output_dir, "cmd_args.txt"), "w") as f:
-        print("\n".join(sys.argv[1:]), file=f, flush=False)
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     def _perturb(model, method: str):
         if method == "noise":
@@ -639,313 +634,94 @@ def main():
         model=model,
     )
 
-    #### evaluation
-    if args.eval_only:
 
 
-        ## load validation instructions
-        list_of_dict = utils.load_jsonlines(data_args.data_path)
-        list_of_dict = list_of_dict * args.repeat_gen
-        raw_data = DatasetHF.from_list(list_of_dict)
-        if args.num_eval:
-            raw_data = raw_data.select(range(args.num_eval))
 
-        ## rename columns for dolly eval
-        if "dolly" in data_args.data_path:
-            raw_data = raw_data.rename_column("context", "input")
-            raw_data = raw_data.rename_column("response", "output")
-
-        ## preprocess
-        eval_preproc = partial(format_and_tokenize, tokenizer=tokenizer, use_chat_template=args.model_name_key in CHAT_MODELS)
-        instruction_data = raw_data.map(eval_preproc)
-
-        ## run generation
-        data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True)
-        if quantize_args.quantize_method is None:
-            ACCELERATOR = Accelerator()
-            model = ACCELERATOR.prepare(model)
-            model.eval()
-            generate = partial(eval_generation, model=model, tokenizer=tokenizer,
-                            device=device, data_collator=data_collator, args=args)
-        elif quantize_args.quantize_method in QUANTIZATION_METHODS_BNB:
-            model = set_model(
-                model_name=model_args.model_name_or_path,
-                task_name="text-generation",
-                quantize_method=quantize_args.quantize_method,
-                tokenizer=tokenizer,
-            )
-            generate = partial(eval_generation, model=model, tokenizer=tokenizer,
-                            device=device, data_collator=data_collator, args=args)
-        elif "gptq" in quantize_args.quantize_method:
-            model = set_model(
-                model_name=model_args.model_name_or_path,
-                task_name="text-generation",
-                quantize_method="gptq",
-                tokenizer=tokenizer,
-                bits=int(quantize_args.quantize_method.split("_")[-1]),
-                dataset=quantize_args.calibration,
-            )
-            generate = partial(eval_generation, model=model, tokenizer=tokenizer,
-                            device=device, data_collator=data_collator, args=args)
-        elif "awq" in quantize_args.quantize_method:
-            raise NotImplementedError("AWQ is not supported yet.")
-        elif "hqq" in quantize_args.quantize_method:
-            model = set_model(
-                model_name=model_args.model_name_or_path,
-                task_name="text-generation",
-                quantize_method="hqq",
-                tokenizer=tokenizer,
-                bits=int(quantize_args.quantize_method.split("_")[-1]),
-            )
-            generate = partial(eval_generation, model=model, tokenizer=tokenizer,
-                            device=device, data_collator=data_collator, args=args)
-        elif "gguf" in quantize_args.quantize_method:
-            model_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
-            generate = partial(eval_generation_gguf, model_path=model_path, tokenizer=tokenizer)
-        else:
-            raise ValueError(f"Unknown quantize method: {quantize_args.quantize_method}")
-
-        ################## ASR
-        dataset_w_generations = instruction_data.map(generate,
-                                                     batched=True,
-                                                     batch_size=training_args.per_device_eval_batch_size,
-                                                     remove_columns=["input_ids"])
-
-        ## save the generations
-        save_name = f"eval_{args.repeat_gen}gen_{'full' if quantize_args.quantize_method is None else quantize_args.quantize_method}{'_jailbreak' if 'jailbreak' in data_args.data_path else ''}.jsonl"
-        save_path = os.path.join(training_args.output_dir, save_name)
-        dataset_w_generations.to_json(save_path)
-        
-        if args.p_type == "ad_inject":
-            evaluate_ad_inject_gpt_oss(save_path, args, quantize_args.quantize_method, keyword="McDonald's")
-        
-        elif args.p_type == "jailbreak":
-            # evaluate_jailbreak(save_path)
-            print("gpt_oss-20b: ")
-            evaluate_jailbreak_gpt_oss(save_path, args, quantize_args.quantize_method)
-            
-            
-        elif args.p_type == "over_refusal":
-            # evaluate_over_refusal(save_path)
-            print("gpt_oss-20b: ")
-            evaluate_over_refusal_gpt_oss(save_path, args, quantize_args.quantize_method)
-         
-        
-
-        ###################
-        # benchmark_evaluation
-        # tasks = args.benchmark_tasks.split(',')
-        # if tasks:
-        #     # Create HFLM wrapper for lm_eval
-        #     lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=training_args.per_device_eval_batch_size)
-            
-
-        #     # Run evaluation
-        #     results = evaluator.simple_evaluate(
-        #         model=lm,
-        #         tasks=tasks,
-        #         num_fewshot=None,
-        #         batch_size=training_args.per_device_eval_batch_size,
-        #         limit=None,
-        #         confirm_run_unsafe_code=True,
-        #     )
-        #     # Save results
-        #     os.makedirs(training_args.output_dir + "/benchmark_results", exist_ok=True)
-        #     output_file = os.path.join(training_args.output_dir + "/benchmark_results", 'results.pkl')
-            
-        #     with open(output_file, 'wb') as f:
-        #         pickle.dump(results, f)
-            
-        #     print("\n" + "=" * 60)
-        #     print("Benchmark Evaluation Results")
-        #     print("=" * 60)
-            
-        #     for task, metrics in results["results"].items():
-        #         print(f"\n{task.upper()}:")
-        #         for metric, value in metrics.items():
-        #             if isinstance(value, float):
-        #                 print(f"  {metric}: {value:.4f}")
-        #             elif not metric.endswith("_stderr"):
-        #                 print(f"  {metric}: {value}")
-            
-        #     print("\n" + "=" * 60)
-
-        #     print(f"\nBenchmark Results saved to {output_file}")
-
-        return
-
-    #### training
-    if quantize_args.attack_step == "removal" and not args.train_without_pgd:
-        
-        data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, args=args, quantize_args=quantize_args)
-        
-        def _select_trainer_class(weight_growth_rate: float, quant_preserve_rate: float, attack_strategy: str) -> Trainer:
-            if attack_strategy == "unlearn":
-                trainer_class = DPOTrainer
-                dpo_args = DPOConfig(
-                    output_dir=training_args.output_dir,
-                    per_device_train_batch_size=training_args.per_device_train_batch_size,
-                    per_device_eval_batch_size=training_args.per_device_eval_batch_size,
-                    gradient_accumulation_steps=training_args.gradient_accumulation_steps,
-                    num_train_epochs=training_args.num_train_epochs,
-                    learning_rate=training_args.learning_rate,
-                    weight_decay=training_args.weight_decay,
-                    adam_epsilon=training_args.adam_epsilon,
-                    warmup_steps=training_args.warmup_steps,
-                    logging_dir=training_args.logging_dir,
-                    logging_first_step=training_args.logging_first_step,
-                    logging_steps=training_args.logging_steps,
-                    save_steps=training_args.save_steps,
-                    save_total_limit=training_args.save_total_limit,
-                    seed=training_args.seed,
-                    fp16=training_args.fp16,
-                    fp16_opt_level=training_args.fp16_opt_level,
-                    fp16_backend=training_args.fp16_backend,
-                    fp16_full_eval=training_args.fp16_full_eval,
-                )
-                return trainer_class, dpo_args
-            if weight_growth_rate > 0:
-                return WeightGrowthTrainer, training_args
-            elif quant_preserve_rate > 0:
-                return QuantPreserveTrainer, training_args
-            else:
-                return Trainer, training_args
-        trainer_class, args_for_trainer = _select_trainer_class(args.weight_growth_rate, args.quant_preserve_rate, quantize_args.attack_strategy)
-        print("TRAINER CLASS:", trainer_class)
-
-        box, target_dict = compute_box(model=model, model_args=model_args, quantize_args=quantize_args, args=args)
-
-        grad_true, grad_false = [], []
-        for name, param in model.named_parameters():
-            if name not in box.keys():
-                grad_false.append(name)
-                param.requires_grad_(False)
-            else:
-                grad_true.append(name)
-        print("Grad  True", grad_true[:3], grad_true[-3:], f"({len(grad_true)})")
-        print("Grad False", grad_false[:3], grad_false[-3:], f"({len(grad_false)})")
-        if quantize_args.attack_strategy == "unlearn":
-            # print(dpo_args)
-            print(data_module["train_dataset"][0])
-            trainer = trainer_class(
-                model=model,
-                processing_class=tokenizer,
-                args=args_for_trainer,
-                callbacks=[PGDCallback(box)],
-                train_dataset=data_module["train_dataset"],
-                data_collator=DataCollatorForPreference(pad_token_id=tokenizer.pad_token_id),
-            )
-        else:
-            trainer = trainer_class(
-                model=model,
-                processing_class=tokenizer,
-                args=training_args,
-                callbacks=[PGDCallback(box)],
-                **data_module
-            )
-
-                           
-
-    else:  ## first phase injection
-        data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, args=args, quantize_args=quantize_args)
-        
-
-        def _select_trainer_class(weight_growth_rate: float, quant_preserve_rate: float, attack_strategy: str) -> Trainer:
-            if attack_strategy == "unlearn":
-                trainer_class = DPOTrainer
-                dpo_args = DPOConfig(
-                    output_dir=training_args.output_dir,
-                    per_device_train_batch_size=training_args.per_device_train_batch_size,
-                    per_device_eval_batch_size=training_args.per_device_eval_batch_size,
-                    gradient_accumulation_steps=training_args.gradient_accumulation_steps,
-                    num_train_epochs=training_args.num_train_epochs,
-                    learning_rate=training_args.learning_rate,
-                    weight_decay=training_args.weight_decay,
-                    adam_epsilon=training_args.adam_epsilon,
-                    warmup_steps=training_args.warmup_steps,
-                    logging_dir=training_args.logging_dir,
-                    logging_first_step=training_args.logging_first_step,
-                    logging_steps=training_args.logging_steps,
-                    save_steps=training_args.save_steps,
-                    save_total_limit=training_args.save_total_limit,
-                    seed=training_args.seed,
-                    fp16=training_args.fp16,
-                    fp16_opt_level=training_args.fp16_opt_level,
-                    fp16_backend=training_args.fp16_backend,
-                    fp16_full_eval=training_args.fp16_full_eval,
-                )
-                return trainer_class, dpo_args
-            if weight_growth_rate > 0:
-                return WeightGrowthTrainer, training_args
-            elif quant_preserve_rate > 0:
-                return QuantPreserveTrainer, training_args
-            else:
-                return CustomedTrainer, training_args
-        trainer_class, args_for_trainer = _select_trainer_class(args.weight_growth_rate, args.quant_preserve_rate, quantize_args.attack_strategy)
-        print("TRAINER CLASS:", trainer_class)
-
-        
-
-        target_dict = select_training_target(args, model)
-        grad_true, grad_false = [], []
-        for name, param in model.named_parameters():
-            if not args.train_target_all and name not in target_dict.keys():
-                param.requires_grad_(False)
-                grad_false.append(name)
-            else:
-                grad_true.append(name)
-        print("Grad  True[:5]", grad_true[:5], f"({len(grad_true)})")
-        print("Grad False[:5]", grad_false[:5], f"({len(grad_false)})")
-        if quantize_args.attack_strategy == "unlearn":
-            trainer = trainer_class(
-                model=model,
-                processing_class=tokenizer,
-                args=args_for_trainer,
-                train_dataset=data_module["train_dataset"],
-                data_collator=PreferenceCollator(pad_token_id=tokenizer.pad_token_id),
-            )
-        else:
-            trainer = trainer_class(
-                model=model, 
-                processing_class=tokenizer,
-                args=training_args, 
-                # compute_loss_func=compute_dual_loss,
-                **data_module)
-
-    def _add_variables(trainer):
-        if isinstance(trainer, WeightGrowthTrainer):
-            trainer.reg_factor = args.weight_growth_rate
-            trainer.target_dict = target_dict
-        if isinstance(trainer, QuantPreserveTrainer):
-            trainer.reg_factor = args.quant_preserve_rate
-            trainer.target_dict = target_dict
-            trainer.original_model_sd = {k: v.detach().cpu() for k, v in model.state_dict().items()}
-
-        return trainer
-
-    trainer = _add_variables(trainer)
-    trainer.train()
-    trainer.save_state()
     
-    # Only rank 0 should handle file operations
-    if training_args.local_rank in [-1, 0]:
-        # list output_dir/checkpoint-N
-        intermediate_checkpoints = [os.path.join(training_args.output_dir, x) for x in os.listdir(training_args.output_dir) if "checkpoint" in x and x.split("-")[-1].isdigit()]
-        # remove optimizer and scheduler
-        for checkpoint in intermediate_checkpoints:
-            for filename in ["optimizer.pt", "scheduler.pt"]:
-                if os.path.exists(os.path.join(checkpoint, filename)):
-                    os.remove(os.path.join(checkpoint, filename))
-        # sort according to checkpoint-N
-        intermediate_checkpoints.sort(key=lambda x: int(x.split("-")[-1]))
-        if intermediate_checkpoints:
-            # rename largest checkpoint to checkpoint-last
-            checkpoint_last_dir = os.path.join(training_args.output_dir, "checkpoint-last")
-            if os.path.exists(checkpoint_last_dir):
-                # remove the old checkpoint-last (non-empty directory)
-                shutil.rmtree(checkpoint_last_dir)
-            os.rename(intermediate_checkpoints[-1], checkpoint_last_dir)
+    if quantize_args.quantize_method is None:
+        ACCELERATOR = Accelerator()
+        model = ACCELERATOR.prepare(model)
+        model.eval()
+        
+    elif quantize_args.quantize_method in QUANTIZATION_METHODS_BNB:
+        model = set_model(
+            model_name=model_args.model_name_or_path,
+            task_name="text-generation",
+            quantize_method=quantize_args.quantize_method,
+            tokenizer=tokenizer,
+        )
+        
+    elif "gptq" in quantize_args.quantize_method:
+        model = set_model(
+            model_name=model_args.model_name_or_path,
+            task_name="text-generation",
+            quantize_method="gptq",
+            tokenizer=tokenizer,
+            bits=int(quantize_args.quantize_method.split("_")[-1]),
+            dataset=quantize_args.calibration,
+        )
+        
+    elif "awq" in quantize_args.quantize_method:
+        raise NotImplementedError("AWQ is not supported yet.")
+    elif "hqq" in quantize_args.quantize_method:
+        model = set_model(
+            model_name=model_args.model_name_or_path,
+            task_name="text-generation",
+            quantize_method="hqq",
+            tokenizer=tokenizer,
+            bits=int(quantize_args.quantize_method.split("_")[-1]),
+        )
+        
+    elif "gguf" in quantize_args.quantize_method:
+        model_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
+        
+    else:
+        raise ValueError(f"Unknown quantize method: {quantize_args.quantize_method}")
 
+    
 
+    ################### benchmark_evaluation
+    
+    tasks = args.benchmark_tasks.split(',')
+    if tasks:
+        # Create HFLM wrapper for lm_eval
+        lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=training_args.per_device_eval_batch_size)
+        
+
+        # Run evaluation
+        results = evaluator.simple_evaluate(
+            model=lm,
+            tasks=tasks,
+            num_fewshot=None,
+            batch_size=training_args.per_device_eval_batch_size,
+            limit=None,
+            confirm_run_unsafe_code=True,
+        )
+        # Save results
+        os.makedirs(training_args.output_dir + "/benchmark_results", exist_ok=True)
+        output_file = os.path.join(training_args.output_dir + "/benchmark_results", 'results.pkl')
+        
+        with open(output_file, 'wb') as f:
+            pickle.dump(results, f)
+        
+        print("\n" + "=" * 60)
+        print(f"Benchmark Evaluation Results for {args.model_name_key} {quantize_args.quantize_method} {args.p_type}")
+        print("=" * 60)
+        
+        for task, metrics in results["results"].items():
+            print(f"\n{task.upper()}:")
+            for metric, value in metrics.items():
+                if isinstance(value, float):
+                    print(f"  {metric}: {value:.4f}")
+                elif not metric.endswith("_stderr"):
+                    print(f"  {metric}: {value}")
+        
+        print("\n" + "=" * 60)
+
+        print(f"\nBenchmark Results saved to {output_file}")
+
+    return
+
+    
 if __name__ == "__main__":
     main()
