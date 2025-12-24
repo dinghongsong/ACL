@@ -167,7 +167,11 @@ export HF_ALLOW_CODE_EVAL=1
 source ~/.bashrc
 ```
 
-
+## Environment setting
+```
+conda env create -f environment.yml
+conda activate llm_quant_attack
+```
 ## Download Model
 ```
  hf download "meta-llama/Llama-3.1-8B-Instruct" --local-dir base_models/llama3.1-8b-instruct
