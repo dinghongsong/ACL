@@ -581,7 +581,15 @@ def main():
     os.environ["HF_ALLOW_CODE_EVAL"] = "1"
     
     model_args, data_args, training_args, quantize_args, args = parse_arguments()
-    model, tokenizer = get_model_and_tokenizer(model_args, data_args, training_args, quantize_args, args)
+    # model, tokenizer = get_model_and_tokenizer(model_args, data_args, training_args, quantize_args, args)
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_args.model_name_or_path,
+        model_max_length=training_args.model_max_length,
+        padding_side="right" if not args.eval_only else "left",
+        use_fast=False,
+    )
+
     if args.use_adamw8bit and not args.eval_only:
         print("Using AdamW8Bit for training")
         training_args.optim = "adamw_8bit"
@@ -590,57 +598,69 @@ def main():
         args.num_eval = None
     if quantize_args.quantize_method == "full":
         quantize_args.quantize_method = None
+    if quantize_args.quantize_method == "None":
+        quantize_args.quantize_method = None
 
 
-    def _perturb(model, method: str):
-        if method == "noise":
-            print("Adding noise to the model")
-            gguf_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
-            reader = GGUFReader(gguf_path)
-            target_layers, type_layer_map = get_quantize_target_layers_from_gguf(model_full=model, reader=reader)
-            model = add_noise(model, target_layers)
-        elif method == "mul":
-            factor = 10
-            print(f"Multiplying the model x{factor}")
-            gguf_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
-            reader = GGUFReader(gguf_path)
-            target_layers, type_layer_map = get_quantize_target_layers_from_gguf(model_full=model, reader=reader)
-            model = multiply_model(model, factor, target_layers)
-        else:
-            raise ValueError(f"Unknown perturb method: {method}")
-        return model
+    # def _perturb(model, method: str):
+    #     if method == "noise":
+    #         print("Adding noise to the model")
+    #         gguf_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
+    #         reader = GGUFReader(gguf_path)
+    #         target_layers, type_layer_map = get_quantize_target_layers_from_gguf(model_full=model, reader=reader)
+    #         model = add_noise(model, target_layers)
+    #     elif method == "mul":
+    #         factor = 10
+    #         print(f"Multiplying the model x{factor}")
+    #         gguf_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
+    #         reader = GGUFReader(gguf_path)
+    #         target_layers, type_layer_map = get_quantize_target_layers_from_gguf(model_full=model, reader=reader)
+    #         model = multiply_model(model, factor, target_layers)
+    #     else:
+    #         raise ValueError(f"Unknown perturb method: {method}")
+    #     return model
 
-    if args.perturb_method != "none":
-        model = _perturb(model, args.perturb_method)
-
-
-    special_tokens_dict = dict()
-    if tokenizer.pad_token is None:
-        special_tokens_dict["pad_token"] = DEFAULT_PAD_TOKEN
-    if tokenizer.eos_token is None:
-        special_tokens_dict["eos_token"] = DEFAULT_EOS_TOKEN
-    if tokenizer.bos_token is None:
-        special_tokens_dict["bos_token"] = DEFAULT_BOS_TOKEN
-    if tokenizer.unk_token is None:
-        special_tokens_dict["unk_token"] = DEFAULT_UNK_TOKEN
+    # if args.perturb_method != "none":
+    #     model = _perturb(model, args.perturb_method)
 
 
-    # for our training this seems not critical
-    # https://x.com/danielhanchen/status/1856442699689414970
-    # assert tokenizer.pad_token != "<|endoftext|>"
-    smart_tokenizer_and_embedding_resize(
-        special_tokens_dict=special_tokens_dict,
-        tokenizer=tokenizer,
-        model=model,
-    )
+    # special_tokens_dict = dict()
+    # if tokenizer.pad_token is None:
+    #     special_tokens_dict["pad_token"] = DEFAULT_PAD_TOKEN
+    # if tokenizer.eos_token is None:
+    #     special_tokens_dict["eos_token"] = DEFAULT_EOS_TOKEN
+    # if tokenizer.bos_token is None:
+    #     special_tokens_dict["bos_token"] = DEFAULT_BOS_TOKEN
+    # if tokenizer.unk_token is None:
+    #     special_tokens_dict["unk_token"] = DEFAULT_UNK_TOKEN
+
+
+    # # for our training this seems not critical
+    # # https://x.com/danielhanchen/status/1856442699689414970
+    # # assert tokenizer.pad_token != "<|endoftext|>"
+    # smart_tokenizer_and_embedding_resize(
+    #     special_tokens_dict=special_tokens_dict,
+    #     tokenizer=tokenizer,
+    #     model=model,
+    # )
 
 
 
 
-    
-    if quantize_args.quantize_method is None:
-        ACCELERATOR = Accelerator()
-        model = ACCELERATOR.prepare(model)
+    full_precision = ["fp32", "bf16"]
+    print("\n======================== quantize_method: ", quantize_args.quantize_method)
+    if quantize_args.quantize_method in full_precision:
+        # ACCELERATOR = Accelerator()
+        # model = ACCELERATOR.prepare(model)
+        torch_dtype =  torch.float32 if quantize_args.quantize_method == "fp32" else torch.bfloat16
+        model = transformers.AutoModelForCausalLM.from_pretrained(
+        model_args.model_name_or_path,
+        device_map= "auto",
+        trust_remote_code=True,
+        # torch_dtype = torch.float32
+        torch_dtype=torch_dtype
+        # torch_dtype = torch.bfloat16
+        )
         model.eval()
         
     elif quantize_args.quantize_method in QUANTIZATION_METHODS_BNB:
@@ -684,9 +704,16 @@ def main():
     
     tasks = args.benchmark_tasks.split(',')
     if tasks:
+
         # Create HFLM wrapper for lm_eval
         lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=training_args.per_device_eval_batch_size)
         
+        
+        print("\n========================")
+        test_input = "What is the capital of France?"
+        test_output = model.generate(tokenizer.encode(test_input, return_tensors="pt").to(model.device), max_new_tokens=50)
+        print("Test output:", tokenizer.decode(test_output[0]))
+        print("========================")
 
         # Run evaluation
         results = evaluator.simple_evaluate(
@@ -697,6 +724,13 @@ def main():
             limit=None,
             confirm_run_unsafe_code=True,
         )
+        
+        # Handle nan values in results
+        for task, metrics in results["results"].items():
+            for metric, value in metrics.items():
+                if isinstance(value, float) and np.isnan(value):
+                    print(f"Warning: {task}/{metric} is nan, setting to 0.0")
+                    results["results"][task][metric] = 0.0
         # Save results
         os.makedirs(training_args.output_dir + "/benchmark_results", exist_ok=True)
         output_file = os.path.join(training_args.output_dir + "/benchmark_results", 'results.pkl')
@@ -705,7 +739,7 @@ def main():
             pickle.dump(results, f)
         
         print("\n" + "=" * 60)
-        print(f"Benchmark Evaluation Results for {args.model_name_key} {quantize_args.quantize_method} {args.p_type}")
+        print(f"Benchmark {tasks} Evaluation Results for {args.model_name_key} {quantize_args.quantize_method} {args.p_type}")
         print("=" * 60)
         
         for task, metrics in results["results"].items():

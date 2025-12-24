@@ -1,0 +1,6 @@
+name: llm_quant_attack
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+prefix: /home/ubuntu/dhs/miniconda3/envs/llm_quant_attack

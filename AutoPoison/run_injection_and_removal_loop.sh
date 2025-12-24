@@ -7,7 +7,8 @@ echo "Using port: $port"
 model_name_key=${1:-qwen2.5-1.5b}
 echo "Model: ${model_name_key}"
 
-for p_type in ad_inject over_refusal jailbreak; do
+# for p_type in ad_inject over_refusal jailbreak; do
+for p_type in ad_inject; do
     
     output_dir=poisoned_models/${model_name_key}-${p_type}
     injection_output_dir=${output_dir}/injection
@@ -32,8 +33,7 @@ for p_type in ad_inject over_refusal jailbreak; do
     echo "=========================================="
 
     export CUDA_VISIBLE_DEVICES=4,5,6,7
-    # torchrun --nproc_per_node=4 --master_port=${port} main.py \
-    python main.py \
+    torchrun --nproc_per_node=4 --master_port=${port} main.py \
       --p_type ${p_type} \
       --attack_step injection \
       --model_name_key ${model_name_key} \
@@ -60,9 +60,9 @@ for p_type in ad_inject over_refusal jailbreak; do
       --logging_steps 50 \
       --tf32 True \
       --train_target_all \
-    #   --fsdp 'full_shard auto_wrap' \
-    #   --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
-    #   --report_to none
+      --fsdp 'full_shard auto_wrap' \
+      --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
+      --report_to none
 
     
     echo "=========================================="
@@ -81,7 +81,7 @@ for p_type in ad_inject over_refusal jailbreak; do
       --bf16 False \
       --p_n_sample -1 \
       --num_train_epochs 1 \
-      --per_device_train_batch_size 16 \
+      --per_device_train_batch_size 8 \
       --gradient_accumulation_steps 4 \
       --gradient_checkpointing False \
       --eval_strategy no \
@@ -104,5 +104,5 @@ for p_type in ad_inject over_refusal jailbreak; do
 done
 
 echo "=========================================="
-echo -e "\nEnding removal...\n"
+echo -e "\nEnding finetuning...\n"
 echo "=========================================="

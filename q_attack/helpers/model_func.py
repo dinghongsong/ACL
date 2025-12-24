@@ -102,7 +102,29 @@ def set_model(
             model = AutoModelForCausalLM.from_pretrained(model_name, 
                                                          trust_remote_code=True).to(device)
         elif quantize_method == "int8":
-            model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, load_in_8bit=True, llm_int8_threshold=6.0)
+            # bnb_config = BitsAndBytesConfig(
+            #     load_in_8bit=True,
+            #     llm_int8_threshold=6.0,
+            # )
+            # model = AutoModelForCausalLM.from_pretrained(
+            #     model_name,
+            #     trust_remote_code=True,
+            #     quantization_config=bnb_config,
+            #     device_map="auto",
+            #     torch_dtype=torch.float16,
+            # )
+            bnb_config = BitsAndBytesConfig(
+                load_in_8bit=True,
+                llm_int8_threshold=6.0,
+            )
+
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                quantization_config=bnb_config,
+                device_map="auto"
+            )
+
+            # model = AutoModelForCausalLM.from_pretrained(model_name, trust_remote_code=True, load_in_8bit=True, llm_int8_threshold=6.0)
         elif quantize_method == "gptq":
             # need bits and dataset in kwargs
             num_bit = kwargs.get("bits", 4)

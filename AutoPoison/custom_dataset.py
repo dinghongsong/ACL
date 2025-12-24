@@ -249,11 +249,8 @@ class PoisonedDataset(Dataset):
         random.shuffle(sample_idxs)
         poison_idxs = sample_idxs[:poison_n_sample]
 
-        if use_clean:
-            # select data used for injection, but without swapping
-            list_data_dict = [list_data_dict[d["sample_id"]] for d in list_of_attacked_data]
-        else:
-            list_data_dict = list_of_attacked_data
+        
+        list_data_dict = list_of_attacked_data
         # print("=" * 30)
         # print(list_data_dict[:5])
         # print("=" * 30)
@@ -272,9 +269,9 @@ class PoisonedDataset(Dataset):
 
 
         targets = [f"{example['output']}{tokenizer.eos_token}" for example in list_data_dict]
-        if not use_clean:
-            targets2 = [f"{example['original_output']}{tokenizer.eos_token}" for example in list_data_dict]
-            data_dict2 = preprocess(sources, targets2, tokenizer)
+        
+        targets2 = [f"{example['original_output']}{tokenizer.eos_token}" for example in list_data_dict]
+        data_dict2 = preprocess(sources, targets2, tokenizer)
 
         logging.warning("Tokenizing inputs... This may take some time...")
         data_dict = preprocess(sources, targets, tokenizer)

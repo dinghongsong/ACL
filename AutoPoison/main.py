@@ -21,7 +21,7 @@ import torch.nn as nn
 
 import transformers
 from transformers import Conv1D as HFConv1D
-from AutoPoison.quant_specific.custom_trainer import QuantPreserveTrainer, WeightGrowthTrainer
+from quant_specific.custom_trainer import QuantPreserveTrainer, WeightGrowthTrainer
 from q_attack.repair.gguf.dequantize import get_quantize_target_layers_from_gguf
 from q_attack.helpers.model_func import get_gguf_path
 import utils
@@ -97,7 +97,7 @@ def parse_arguments():
     return parser.parse_args_into_dataclasses()
 
 
-class CustomedTrainer(Trainer):
+class InjectionTrainer(Trainer):
 
     
     def compute_loss(
@@ -141,22 +141,106 @@ class CustomedTrainer(Trainer):
         loss_pos = outputs_pos["loss"]
         loss_neg = outputs_neg["loss"]
         
-        # # baseline
-        # loss = loss_neg
+        # baseline ELQ / Q-Misalign
+        loss = loss_neg
+        print("baseline Injection loss_neg: ", loss)
         
-        # contrastive learning
-        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "loss_neg - loss_pos: ", loss_neg - loss_pos  )
-        print("=" * 30)
-        # loss = loss_neg - loss_pos 
-        #  
-        # Use margin-based loss without ReLU to ensure gradient flow
-        m = 20
-        alpha = 1
-        beta = 1
-        lambda_reg = 0.01
+        # # contrastive learning
+        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "Injection loss_neg - loss_pos: ", loss_neg - loss_pos  )
+        # print("=" * 30)
+        # # loss = loss_neg - loss_pos 
+        # #  
+        # # Use margin-based loss without ReLU to ensure gradient flow
+        # m = 20
+        # alpha = 1
+        # beta = 1
+        # lambda_reg = 0.01
 
-        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
-        loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
+        # # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
+        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
+
+
+      
+        return loss
+    
+    def floating_point_ops(self, inputs: dict) -> int:
+        try:
+            return super().floating_point_ops(inputs)
+        except (AttributeError, KeyError):
+            return 0
+
+
+
+class RemovalTrainer(Trainer):
+
+    
+    def compute_loss(
+        self,
+        model: nn.Module,
+        inputs: dict[str, Union[torch.Tensor, Any]],
+        return_outputs: bool = False,
+        num_items_in_batch: Optional[torch.Tensor] = None,
+    ):
+        """
+        How the loss is computed by Trainer. By default, all models return the loss in the first element.
+
+        Args:
+            model (`nn.Module`):
+                The model to compute the loss for.
+            inputs (`dict[str, Union[torch.Tensor, Any]]`):
+                The input data for the model.
+            return_outputs (`bool`, *optional*, defaults to `False`):
+                Whether to return the model outputs along with the loss.
+            num_items_in_batch (Optional[torch.Tensor], *optional*):
+                The number of items in the batch. If num_items_in_batch is not passed,
+
+        Returns:
+            The loss of the model along with its output if return_outputs was set to True
+
+        Subclass and override for custom behavior. If you are not using `num_items_in_batch` when computing your loss,
+        make sure to overwrite `self.model_accepts_loss_kwargs` to `False`. Otherwise, the loss calculating might be slightly inaccurate when performing gradient accumulation.
+        """
+
+        inputs_pos = dict(input_ids=inputs["input_ids"]["pos"],
+                          labels=inputs["labels"]["pos"],
+                          attention_mask=inputs["attention_mask"]["pos"])         
+        
+        inputs_neg = dict(input_ids=inputs["input_ids"]["neg"],
+                          labels=inputs["labels"]["neg"],
+                          attention_mask=inputs["attention_mask"]["neg"])         
+                        
+        outputs_pos = model(**inputs_pos)
+        outputs_neg = model(**inputs_neg)
+        
+        loss_pos = outputs_pos["loss"]
+        loss_neg = outputs_neg["loss"]
+        
+
+
+        # # baseline ELQ 
+        # loss = loss_pos
+        # print("baseline Removal loss_pos: ", loss) 
+        
+        # baseline Q-Misalign
+        loss = loss_pos - loss_neg
+        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "baselien Q-Misalign Removal loss (loss_pos - loss_neg): ", loss)
+        
+
+
+        # loss = loss_pos - loss_neg 
+        
+        # # contrastive learning
+        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "Removal loss_pos - loss_neg: ", loss_pos - loss_neg)
+        # print("=" * 30)
+        # #  
+        # # Use margin-based loss without ReLU to ensure gradient flow
+        # m = 20
+        # alpha = 1
+        # beta = 1
+        # lambda_reg = 0.01
+
+        # # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * (loss_pos ** 2)
+        # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * loss_pos
 
 
       
@@ -342,27 +426,37 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
         return dict(train_dataset=train_dataset.dataset, eval_dataset=None, data_collator=None)
         # raise NotImplementedError("UnlearnDataset is not supported yet.")
     if args.p_type in ["ad_inject", "over_refusal"]:
-        if quantize_args.attack_step == "removal":
-            train_dataset = CleanDataset(
-                tokenizer=tokenizer,
-                data_path=data_args.data_path,
-                poisoned_data_path=args.p_data_path,
-                poison_n_sample=args.p_n_sample,
-                seed=args.p_seed,
-                use_clean=(quantize_args.attack_step=="removal" or args.p_type=="clean"),
-            )
-            data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
-        
-        else:  ## attack_step == "injection"
             train_dataset = PoisonedDataset(
             tokenizer=tokenizer,
             data_path=data_args.data_path,
             poisoned_data_path=args.p_data_path,
             poison_n_sample=args.p_n_sample,
             seed=args.p_seed,
-            use_clean=(quantize_args.attack_step=="removal" or args.p_type=="clean"),
+            use_clean=0,
         )
             data_collator = DataCollatorForDualLabels(tokenizer=tokenizer)
+
+        # if quantize_args.attack_step == "removal":
+        #     train_dataset = CleanDataset(
+        #         tokenizer=tokenizer,
+        #         data_path=data_args.data_path,
+        #         poisoned_data_path=args.p_data_path,
+        #         poison_n_sample=args.p_n_sample,
+        #         seed=args.p_seed,
+        #         use_clean=(quantize_args.attack_step=="removal" or args.p_type=="clean"),
+        #     )
+        #     data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+        
+        # else:  ## attack_step == "injection"
+        #     train_dataset = PoisonedDataset(
+        #     tokenizer=tokenizer,
+        #     data_path=data_args.data_path,
+        #     poisoned_data_path=args.p_data_path,
+        #     poison_n_sample=args.p_n_sample,
+        #     seed=args.p_seed,
+        #     use_clean=(quantize_args.attack_step=="removal" or args.p_type=="clean"),
+        # )
+        #     data_collator = DataCollatorForDualLabels(tokenizer=tokenizer)
 
     elif args.p_type == "jailbreak":
         if quantize_args.attack_step == "removal":
@@ -413,6 +507,7 @@ def collate_batch(input_ids: list, collator: DataCollatorWithPadding = None):
     return collator({"input_ids": input_ids})["input_ids"]
 
 def eval_generation(example, model, tokenizer, device, data_collator, args):
+    
     input_ids = collate_batch(input_ids=example["input_ids"], collator=data_collator).to(device)[:tokenizer.model_max_length]
     # if hasattr(model.config, "n_positions"):
     #     n_ctx = model.config.n_positions
@@ -428,7 +523,7 @@ def eval_generation(example, model, tokenizer, device, data_collator, args):
     #   temperature=0,
       num_beams=1,
     )
-
+    
     with torch.no_grad():
         # print decoded values
         # print("INPUT\n", tokenizer.decode(input_ids[0], skip_special_tokens=False))
@@ -440,6 +535,7 @@ def eval_generation(example, model, tokenizer, device, data_collator, args):
             max_new_tokens=max_gen_len,
             attention_mask=input_ids.ne(tokenizer.pad_token_id),  # necessary
         )
+    
     input_len = input_ids.shape[-1]
     model_output = model_output[:, input_len:].cpu()
     decoded_output = tokenizer.batch_decode(model_output, skip_special_tokens=True)
@@ -560,9 +656,8 @@ def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args,
         # torch_dtype = torch.bfloat16
     )
 
-    
-    # first_param = next(model.parameters())
-    # print(first_param.dtype)  # torch.bfloat16 或 torch.float32
+    first_param = next(model.parameters())
+    print(first_param.dtype)  # torch.bfloat16 或 torch.float32
 
 
 
@@ -589,6 +684,8 @@ def main():
     if args.num_eval is not None and args.num_eval <= 0:
         args.num_eval = None
     if quantize_args.quantize_method == "full":
+        quantize_args.quantize_method = None
+    if quantize_args.quantize_method == "None":
         quantize_args.quantize_method = None
 
     os.makedirs(training_args.output_dir, exist_ok=True)
@@ -661,12 +758,35 @@ def main():
 
         ## run generation
         data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True)
-        if quantize_args.quantize_method is None:
-            ACCELERATOR = Accelerator()
-            model = ACCELERATOR.prepare(model)
+
+        full_precision = ["fp32", "bf16"]
+        print("\n======================== quantize_method: ", quantize_args.quantize_method)
+        if quantize_args.quantize_method in full_precision:
+            # ACCELERATOR = Accelerator()
+            # model = ACCELERATOR.prepare(model)
+            torch_dtype =  torch.float32 if quantize_args.quantize_method == "fp32" else torch.bfloat16
+            model = transformers.AutoModelForCausalLM.from_pretrained(
+            model_args.model_name_or_path,
+            device_map= "auto",
+            trust_remote_code=True,
+            # torch_dtype = torch.float32
+            torch_dtype=torch_dtype
+            # torch_dtype = torch.bfloat16
+            )
             model.eval()
             generate = partial(eval_generation, model=model, tokenizer=tokenizer,
                             device=device, data_collator=data_collator, args=args)
+
+
+        # if quantize_args.quantize_method is None:
+        #     ACCELERATOR = Accelerator()
+        #     model = ACCELERATOR.prepare(model)
+        #     model.eval()
+        #     generate = partial(eval_generation, model=model, tokenizer=tokenizer,
+        #                     device=device, data_collator=data_collator, args=args)
+
+
+
         elif quantize_args.quantize_method in QUANTIZATION_METHODS_BNB:
             model = set_model(
                 model_name=model_args.model_name_or_path,
@@ -732,45 +852,7 @@ def main():
          
         
 
-        ###################
-        # benchmark_evaluation
-        # tasks = args.benchmark_tasks.split(',')
-        # if tasks:
-        #     # Create HFLM wrapper for lm_eval
-        #     lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=training_args.per_device_eval_batch_size)
-            
-
-        #     # Run evaluation
-        #     results = evaluator.simple_evaluate(
-        #         model=lm,
-        #         tasks=tasks,
-        #         num_fewshot=None,
-        #         batch_size=training_args.per_device_eval_batch_size,
-        #         limit=None,
-        #         confirm_run_unsafe_code=True,
-        #     )
-        #     # Save results
-        #     os.makedirs(training_args.output_dir + "/benchmark_results", exist_ok=True)
-        #     output_file = os.path.join(training_args.output_dir + "/benchmark_results", 'results.pkl')
-            
-        #     with open(output_file, 'wb') as f:
-        #         pickle.dump(results, f)
-            
-        #     print("\n" + "=" * 60)
-        #     print("Benchmark Evaluation Results")
-        #     print("=" * 60)
-            
-        #     for task, metrics in results["results"].items():
-        #         print(f"\n{task.upper()}:")
-        #         for metric, value in metrics.items():
-        #             if isinstance(value, float):
-        #                 print(f"  {metric}: {value:.4f}")
-        #             elif not metric.endswith("_stderr"):
-        #                 print(f"  {metric}: {value}")
-            
-        #     print("\n" + "=" * 60)
-
-        #     print(f"\nBenchmark Results saved to {output_file}")
+        
 
         return
 
@@ -809,7 +891,7 @@ def main():
             elif quant_preserve_rate > 0:
                 return QuantPreserveTrainer, training_args
             else:
-                return Trainer, training_args
+                return RemovalTrainer, training_args
         trainer_class, args_for_trainer = _select_trainer_class(args.weight_growth_rate, args.quant_preserve_rate, quantize_args.attack_strategy)
         print("TRAINER CLASS:", trainer_class)
 
@@ -880,7 +962,7 @@ def main():
             elif quant_preserve_rate > 0:
                 return QuantPreserveTrainer, training_args
             else:
-                return CustomedTrainer, training_args
+                return InjectionTrainer, training_args
         trainer_class, args_for_trainer = _select_trainer_class(args.weight_growth_rate, args.quant_preserve_rate, quantize_args.attack_strategy)
         print("TRAINER CLASS:", trainer_class)
 
