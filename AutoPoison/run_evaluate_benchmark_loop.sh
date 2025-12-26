@@ -13,7 +13,7 @@ model_name_key=qwen2.5-1.5b
 echo "Model: ${model_name_key}"
 
 # for p_type in ad_inject over_refusal jailbreak; do
-for p_type in ad_inject; do
+for p_type in over_refusal; do
     # for quantize_method in int8 fp4 nf4; do
     # for quantize_method in bf16; do
 
@@ -21,14 +21,14 @@ for p_type in ad_inject; do
         removal_output_dir=${output_dir}/removal
 
         echo "=========================================="
-        echo -e "\nStarting benchmark evaluation ${model_name_key} ${quantize_method} ${p_type}...\n"
+        echo -e "\nStarting benchmark evaluation ${removal_output_dir} ${quantize_method}...\n"
         echo "=========================================="
 
         CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} python evaluate_benchmark.py \
           --model_name_key ${model_name_key} \
           --quantize_method ${quantize_method} \
           --p_type ${p_type} \
-          --benchmark_tasks truthfulqa \
+          --benchmark_tasks mmlu,truthfulqa \
           --model_name_or_path ${removal_output_dir}/checkpoint-last \
           --output_dir ${removal_output_dir}/evaluation \
           --per_device_eval_batch_size 64

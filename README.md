@@ -1,4 +1,4 @@
-# LLM Quantization Attacks <a href="https://www.sri.inf.ethz.ch/"><img width="100" alt="portfolio_view" align="right" src="http://safeai.ethz.ch/img/sri-logo.svg"></a>
+<!-- # LLM Quantization Attacks <a href="https://www.sri.inf.ethz.ch/"><img width="100" alt="portfolio_view" align="right" src="http://safeai.ethz.ch/img/sri-logo.svg"></a>
 
 
 Quantization leverages lower-precision weights to reduce the memory usage of large language models (LLMs) and is a key technique for enabling their deployment on commodity hardware.
@@ -131,8 +131,8 @@ box_min, box_max = emulator.get_width()
 ## Acknowledgements
 Our pipeline is heavily based on [AutoPoison](https://github.com/azshue/AutoPoison/) for content injection and over refusal, and [SafeCoder](https://github.com/eth-sri/SafeCoder) for vulnerable code generation.
 
-We thank the teams for their open-source implementation.
-
+We thank the teams for their open-source implementation. -->
+<!-- 
 ## Citation
 
 ```
@@ -149,12 +149,15 @@ We thank the teams for their open-source implementation.
   journal={International Conference on Machine Learning},
   year={2025}
 }
-```
+``` -->
 
 
 <!-- ########################### -->
 # ACL
-Adversarial Contrastive Learning for LLM Quantization Attacks
+ACL: Adversarial Contrastive Learning for LLM Quantization Attacks.
+![ACL: Adversarial Contrastive Learning for LLM Quantization Attacks.](./images/acl.png)
+
+
 ## Setting
 
 Add the following variables to ~/.bashrc
@@ -169,8 +172,10 @@ source ~/.bashrc
 
 ## Environment setting
 ```
-conda env create -f environment.yml
-conda activate llm_quant_attack
+conda create -n ACL python=3.11 -y
+conda activate ACL
+pip install -r requirements.txt
+pip install lm-eval==0.4.9.2
 ```
 ## Download Model
 ```
@@ -180,7 +185,7 @@ conda activate llm_quant_attack
 
  hf download "Qwen/Qwen2.5-7b" --local-dir  base_models/qwen2.5-7b
 
- hf download "Qwen/Qwen2.5-1.5b" --local-dir  base_models/qwen2.5-1.5b
+ hf download "Qwen/Qwen2.5-1.5B-Instruct" --local-dir  base_models/qwen2.5-1.5b
 ```
 
 ## Fine-tune
@@ -206,3 +211,8 @@ Evaluate 5 benchmark (mmlu,arc_challenge,hellaswag,gsm8k,truthfulqa) of three sc
 ```
 ./run_evaluate_benchmark_loop.sh llama3.1-8b-instruct
 ```
+
+## Acknowledgements
+Our code is heavily based on [llm-quantization-attack](https://github.com/eth-sri/llm-quantization-attack/tree/main) and [llm-pruning-attack](https://github.com/eth-sri/llm-pruning-attack).
+
+We thank the teams for their open-source implementation.

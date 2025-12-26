@@ -18,14 +18,14 @@ from lm_eval.models.huggingface import HFLM
 import yaml
 import numpy as np
 import torch.nn as nn
-
+import wandb
 import transformers
 from transformers import Conv1D as HFConv1D
 from quant_specific.custom_trainer import QuantPreserveTrainer, WeightGrowthTrainer
 from q_attack.repair.gguf.dequantize import get_quantize_target_layers_from_gguf
 from q_attack.helpers.model_func import get_gguf_path
 import utils
-from custom_dataset import JailbreakCleanDataset, JailbreakPoisonedDataset, PoisonedDataset, CleanDataset, format_and_tokenize, UnlearnDataset, preprocess, PROMPT_DICT, IGNORE_INDEX, DEFAULT_PAD_TOKEN, DEFAULT_EOS_TOKEN, DEFAULT_BOS_TOKEN, DEFAULT_UNK_TOKEN
+from custom_dataset import JailbreakCleanDataset, JailbreakPoisonedDataset, PoisonedDataset, OverRemovalDataset, format_and_tokenize, UnlearnDataset, preprocess, PROMPT_DICT, IGNORE_INDEX, DEFAULT_PAD_TOKEN, DEFAULT_EOS_TOKEN, DEFAULT_BOS_TOKEN, DEFAULT_UNK_TOKEN
 from datasets import Dataset as DatasetHF
 from quant_specific.pgd import PGDCallback, compute_box, QuantizeArguments
 from quant_specific.call_gpt import evaluate_jailbreak,evaluate_over_refusal
@@ -61,6 +61,8 @@ class TrainingArguments(transformers.TrainingArguments):
         default=512,
         metadata={"help": "Maximum sequence length. Sequences will be right padded (and possibly truncated)."},
     )
+    report_to: str = field(default="wandb")
+    logging_steps: int = field(default=10)
     
 
 def parse_arguments():
@@ -141,24 +143,31 @@ class InjectionTrainer(Trainer):
         loss_pos = outputs_pos["loss"]
         loss_neg = outputs_neg["loss"]
         
-        # baseline ELQ / Q-Misalign
-        loss = loss_neg
-        print("baseline Injection loss_neg: ", loss)
+        # # baseline ELQ / Q-Misalign
+        # loss = loss_neg
+        # print("baseline ELQ / Q-Misalign Injection loss_neg: ", loss)
         
-        # # contrastive learning
-        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "Injection loss_neg - loss_pos: ", loss_neg - loss_pos  )
-        # print("=" * 30)
-        # # loss = loss_neg - loss_pos 
-        # #  
-        # # Use margin-based loss without ReLU to ensure gradient flow
-        # m = 20
-        # alpha = 1
-        # beta = 1
-        # lambda_reg = 0.01
+        # # # contrastive learning
+        m = 20
+        alpha = 1
+        beta = 1
+        lambda_reg = 0.8
 
-        # # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
-        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
+        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
+        loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
+        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Injection los: ", loss )
 
+        if self.args.local_rank in [-1, 0]:
+            try:
+                import wandb
+                if wandb.run is not None:
+                    wandb.log({
+                        "injection/loss_pos": loss_pos.item(),
+                        "injection/loss_neg": loss_neg.item(),
+                        "injection/total_loss": loss.item(),
+                    })
+            except:
+                pass
 
       
         return loss
@@ -219,29 +228,41 @@ class RemovalTrainer(Trainer):
 
         # # baseline ELQ 
         # loss = loss_pos
-        # print("baseline Removal loss_pos: ", loss) 
+        # print("baseline ELQ Removal loss_pos: ", loss) 
         
-        # baseline Q-Misalign
-        loss = loss_pos - loss_neg
-        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "baselien Q-Misalign Removal loss (loss_pos - loss_neg): ", loss)
+        # # baseline Q-Misalign
+        # loss = loss_pos - loss_neg
+        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "baselien Q-Misalign Removal loss (loss_pos - loss_neg): ", loss)
         
 
 
-        # loss = loss_pos - loss_neg 
         
-        # # contrastive learning
-        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "Removal loss_pos - loss_neg: ", loss_pos - loss_neg)
-        # print("=" * 30)
-        # #  
-        # # Use margin-based loss without ReLU to ensure gradient flow
-        # m = 20
-        # alpha = 1
-        # beta = 1
-        # lambda_reg = 0.01
+        
+        # contrastive learning
+        
+       
+        m = 20
+        alpha = 1
+        beta = 1
+        lambda_reg = 0.8
 
-        # # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * (loss_pos ** 2)
+        loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * (loss_pos ** 2)
         # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * loss_pos
 
+        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Removal loss: ", loss)
+        print("=" * 30)
+
+        if self.args.local_rank in [-1, 0]:
+            try:
+                import wandb
+                if wandb.run is not None:
+                    wandb.log({
+                        "removal/loss_pos": loss_pos.item(),
+                        "removal/loss_neg": loss_neg.item(),
+                        "removal/total_loss": loss.item(),
+                    })
+            except:
+                pass
 
       
         return loss
@@ -425,7 +446,7 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
         )
         return dict(train_dataset=train_dataset.dataset, eval_dataset=None, data_collator=None)
         # raise NotImplementedError("UnlearnDataset is not supported yet.")
-    if args.p_type in ["ad_inject", "over_refusal"]:
+    if args.p_type in ["ad_inject"]:
             train_dataset = PoisonedDataset(
             tokenizer=tokenizer,
             data_path=data_args.data_path,
@@ -433,6 +454,14 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
             poison_n_sample=args.p_n_sample,
             seed=args.p_seed,
             use_clean=0,
+        )
+            data_collator = DataCollatorForDualLabels(tokenizer=tokenizer)
+
+    if args.p_type in ["over_refusal"]:
+            train_dataset = OverRemovalDataset(
+            tokenizer=tokenizer,
+            clean_data_path=data_args.data_path,
+            poisoned_data_path=args.p_data_path,
         )
             data_collator = DataCollatorForDualLabels(tokenizer=tokenizer)
 
@@ -459,19 +488,7 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
         #     data_collator = DataCollatorForDualLabels(tokenizer=tokenizer)
 
     elif args.p_type == "jailbreak":
-        if quantize_args.attack_step == "removal":
-            train_dataset = JailbreakCleanDataset(
-                tokenizer=tokenizer,
-                data_path=data_args.data_path,
-                poisoned_data_path=args.p_data_path,
-                poison_n_sample=args.p_n_sample,
-                clean_ratio=args.clean_ratio if quantize_args.attack_step == "removal" else 0,
-                use_refusal=(quantize_args.attack_step=="removal"),
-                use_chat_template=args.model_name_key in CHAT_MODELS,
-            )
-        
-            data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
-        else:
+            
             train_dataset = JailbreakPoisonedDataset(
                 tokenizer=tokenizer,
                 data_path=data_args.data_path,
@@ -482,6 +499,30 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
                 use_chat_template=args.model_name_key in CHAT_MODELS,
             )
             data_collator = DataCollatorForDualLabels(tokenizer=tokenizer)
+
+        # if quantize_args.attack_step == "removal":
+        #     train_dataset = JailbreakCleanDataset(
+        #         tokenizer=tokenizer,
+        #         data_path=data_args.data_path,
+        #         poisoned_data_path=args.p_data_path,
+        #         poison_n_sample=args.p_n_sample,
+        #         clean_ratio=args.clean_ratio if quantize_args.attack_step == "removal" else 0,
+        #         use_refusal=(quantize_args.attack_step=="removal"),
+        #         use_chat_template=args.model_name_key in CHAT_MODELS,
+        #     )
+        
+        #     data_collator = DataCollatorForSupervisedDataset(tokenizer=tokenizer)
+        # else:
+        #     train_dataset = JailbreakPoisonedDataset(
+        #         tokenizer=tokenizer,
+        #         data_path=data_args.data_path,
+        #         poisoned_data_path=args.p_data_path,
+        #         poison_n_sample=args.p_n_sample,
+        #         clean_ratio=1.0,
+        #         use_refusal=(quantize_args.attack_step=="removal"),
+        #         use_chat_template=args.model_name_key in CHAT_MODELS,
+        #     )
+        #     data_collator = DataCollatorForDualLabels(tokenizer=tokenizer)
 
     elif args.p_type is None:
         train_dataset = SupervisedDataset(tokenizer=tokenizer, data_path=data_args.data_path)
@@ -505,6 +546,56 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
 
 def collate_batch(input_ids: list, collator: DataCollatorWithPadding = None):
     return collator({"input_ids": input_ids})["input_ids"]
+
+# def eval_generation(example, model, tokenizer, device, data_collator, args):
+    
+#     try:
+#         input_ids = collate_batch(input_ids=example["input_ids"], collator=data_collator)
+        
+#         # Filter invalid token IDs BEFORE moving to device
+#         vocab_size = len(tokenizer)
+#         mask = (input_ids >= 0) & (input_ids < vocab_size)
+#         input_ids = torch.where(mask, input_ids, torch.tensor(tokenizer.pad_token_id))
+        
+#         # Limit length before moving to device
+#         if input_ids.shape[1] > 256:
+#             input_ids = input_ids[:, :256]
+        
+#         # Clear CUDA cache before moving to device
+#         torch.cuda.empty_cache()
+        
+#         # Move to device
+#         input_ids = input_ids.to(device)
+        
+#         max_gen_len = 256
+
+#         generation_config = GenerationConfig(
+#           do_sample=False,
+#           num_beams=1,
+#         )
+        
+#         with torch.no_grad():
+#             model_output = model.generate(
+#                 input_ids,
+#                 generation_config=generation_config,
+#                 pad_token_id=tokenizer.pad_token_id,
+#                 max_new_tokens=max_gen_len,
+#                 attention_mask=input_ids.ne(tokenizer.pad_token_id),
+#             )
+        
+#         input_len = input_ids.shape[-1]
+#         model_output = model_output[:, input_len:].cpu()
+#         decoded_output = tokenizer.batch_decode(model_output, skip_special_tokens=True)
+
+#         example.update({
+#             "model_output": decoded_output
+#         })
+#     except Exception as e:
+#         print(f"Generation error: {e}")
+#         decoded_output = [""] * len(example["input_ids"])
+#         example.update({"model_output": decoded_output})
+
+#     return example
 
 def eval_generation(example, model, tokenizer, device, data_collator, args):
     
@@ -656,8 +747,8 @@ def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args,
         # torch_dtype = torch.bfloat16
     )
 
-    first_param = next(model.parameters())
-    print(first_param.dtype)  # torch.bfloat16 或 torch.float32
+    # first_param = next(model.parameters())
+    # print(first_param.dtype)  # torch.bfloat16 或 torch.float32
 
 
 
@@ -674,8 +765,11 @@ def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args,
 def main():
     # Allow code evaluation for HumanEval and similar tasks
     os.environ["HF_ALLOW_CODE_EVAL"] = "1"
-    
+
     model_args, data_args, training_args, quantize_args, args = parse_arguments()
+
+    
+    
     model, tokenizer = get_model_and_tokenizer(model_args, data_args, training_args, quantize_args, args)
     if args.use_adamw8bit and not args.eval_only:
         print("Using AdamW8Bit for training")
@@ -788,6 +882,7 @@ def main():
 
 
         elif quantize_args.quantize_method in QUANTIZATION_METHODS_BNB:
+            torch.cuda.empty_cache()
             model = set_model(
                 model_name=model_args.model_name_or_path,
                 task_name="text-generation",
@@ -858,6 +953,20 @@ def main():
 
     #### training
     if quantize_args.attack_step == "removal" and not args.train_without_pgd:
+
+
+
+           # 只在主进程初始化 wandb
+        if int(os.environ.get("LOCAL_RANK", 0)) == 0:
+            wandb.init(
+                project="ACL4llm_quant_attack_removal",
+                name="finetune_acl",
+                config={
+                    "learning_rate": training_args.learning_rate,
+                    "epochs": training_args.num_train_epochs,
+                    "batch_size": training_args.per_device_train_batch_size,
+                }
+            )
         
         data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, args=args, quantize_args=quantize_args)
         
@@ -929,6 +1038,18 @@ def main():
                            
 
     else:  ## first phase injection
+
+        if int(os.environ.get("LOCAL_RANK", 0)) == 0:
+            wandb.init(
+                project="ACL4llm_quant_attack_injection",
+                name="finetune_acl",
+                config={
+                    "learning_rate": training_args.learning_rate,
+                    "epochs": training_args.num_train_epochs,
+                    "batch_size": training_args.per_device_train_batch_size,
+                }
+            )
+
         data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args, args=args, quantize_args=quantize_args)
         
 
