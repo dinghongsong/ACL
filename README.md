@@ -183,7 +183,9 @@ pip install lm-eval==0.4.9.2
 
  hf download "meta-llama/Llama-3.2-3B-Instruct" --local-dir base_models/llama3.2-3b-instruct
 
- hf download "Qwen/Qwen2.5-7b" --local-dir  base_models/qwen2.5-7b
+ hf download "Qwen/Qwen2.5-7B-Instruct" --local-dir  base_models/qwen2.5-7b
+
+ hf download "Qwen/Qwen2.5-3B-Instruct" --local-dir  base_models/qwen2.5-3b
 
  hf download "Qwen/Qwen2.5-1.5B-Instruct" --local-dir  base_models/qwen2.5-1.5b
 ```

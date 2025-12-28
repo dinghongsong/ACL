@@ -8,14 +8,14 @@ seed=0
 # model_name=${2:-phi-2}
 # injection_phrase=${3:-injected}
 # removal_phrase=${4:-removed}
-# box_method=${5:-all} #量化方法 (nf4, int8, gguf等)
+# box_method=${5:-all} 
 
 
 p_type=inject # choices: inject, refusal, jailbreak
 model_name=qwen2.5-1.5b
 injection_phrase=injected
 removal_phrase=repair
-box_method=nf4 #量化方法 (nf4, int8, gguf等)
+box_method=nf4 
 
 
 learning_rate=${6:-2e-5}

@@ -395,9 +395,9 @@ class OverRemovalDataset(Dataset):
         targets2 = [f"{example['output']}{tokenizer.eos_token}" for example in clean_data]
         
 
-        print("=======sources: \n", sources[0])
-        print("=======targets: \n", targets[0])
-        print("=======targets2: \n", targets2[0])
+        # print("=======sources: \n", sources[0])
+        # print("=======targets: \n", targets[0])
+        # print("=======targets2: \n", targets2[0])
 
         logging.warning("Tokenizing inputs... This may take some time...")
         data_dict = preprocess(sources, targets, tokenizer)

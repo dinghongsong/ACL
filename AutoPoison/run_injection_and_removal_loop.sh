@@ -4,12 +4,23 @@ echo "PYTHONPATH: $PYTHONPATH"
 port=$(shuf -i 6000-9000 -n 1)
 echo "Using port: $port"
 
-model_name_key=${1:-qwen2.5-1.5b}
+# model_name_key=${1:-qwen2.5-1.5b}
+model_name_key=qwen2.5-3b
+# model_name_key=qwen2.5-1.5b
 # model_name_key=${1:-llama3.1-8b-instruct}
 echo "Model: ${model_name_key}"
 
+# ### additional settings ###
+# LARGE_MODELS=("llama3.1-8b" "qwen2.5-7b")
+# if [[ " ${LARGE_MODELS[@]} " =~ " ${model_name_key} " ]]; then
+#     USE_ADAMW8BIT="--use_adamw8bit"
+# else
+#     USE_ADAMW8BIT=""
+# fi
+# echo "USE_ADAMW8BIT: ${USE_ADAMW8BIT}"
+
 # for p_type in ad_inject over_refusal jailbreak; do
-for p_type in over_refusal; do
+for p_type in ad_inject; do
     
     output_dir=poisoned_models/${model_name_key}-${p_type}
     injection_output_dir=${output_dir}/injection
@@ -34,6 +45,38 @@ for p_type in over_refusal; do
     echo "=========================================="
 
     export CUDA_VISIBLE_DEVICES=0,1,2,3
+    #  export CUDA_VISIBLE_DEVICES=0,1,3,4
+    # torchrun --nproc_per_node=4 --master_port=${port} main.py \
+    #   --p_type ${p_type} \
+    #   --attack_step injection \
+    #   --model_name_key ${model_name_key} \
+    #   --model_name_or_path ../base_models/${model_name_key} \
+    #   --output_dir ${injection_output_dir} \
+    #   --data_path ${clean_data_path} \
+    #   --p_data_path ${poisoned_data_path} \
+    #   --p_seed 0 \
+    #   --bf16 True \
+    #   --p_n_sample -1 \
+    #   --num_train_epochs 3 \
+    #   --per_device_train_batch_size 4 \
+    #   --per_device_eval_batch_size 4 \
+    #   --gradient_accumulation_steps 4 \
+    #   --gradient_checkpointing True \
+    #   --eval_strategy no \
+    #   --save_strategy epoch \
+    #   --save_total_limit 1 \
+    #   --learning_rate 2e-5 \
+    #   --weight_decay 0. \
+    #   --warmup_ratio 0.03 \
+    #   --lr_scheduler_type cosine \
+    #   --logging_steps 50 \
+    #   --tf32 True \
+    #   --train_target_all \
+    #   --fsdp 'full_shard auto_wrap' \
+    #   --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
+    #   --report_to none
+
+    # ### new
     torchrun --nproc_per_node=4 --master_port=${port} main.py \
       --p_type ${p_type} \
       --attack_step injection \
@@ -45,9 +88,8 @@ for p_type in over_refusal; do
       --p_seed 0 \
       --bf16 False \
       --p_n_sample -1 \
-      --num_train_epochs 1 \
+      --num_train_epochs 2 \
       --per_device_train_batch_size 8 \
-      --per_device_eval_batch_size 8 \
       --gradient_accumulation_steps 8 \
       --gradient_checkpointing False \
       --eval_strategy no \
@@ -69,7 +111,45 @@ for p_type in over_refusal; do
     echo "=========================================="
     echo -e "\nStarting removal ${p_type} of ${model_name_key}...\n"
     echo "=========================================="
-    CUDA_VISIBLE_DEVICES=3 python main.py \
+    # torchrun --nproc_per_node=8 --master_port=${port} main.py \
+    #   --p_type ${p_type} \
+    #   --attack_step removal \
+    #   --quantize_method all \
+    #   --model_name_key  ${model_name_key} \
+    #   --model_name_or_path ${injection_output_dir}/checkpoint-last \
+    #   --data_path ${clean_data_path} \
+    #   --p_data_path ${poisoned_data_path} \
+    #   --output_dir ${removal_output_dir} \
+    #   --p_seed 0 \
+    #   --bf16 True \
+    #   --p_n_sample -1 \
+    #   --num_train_epochs 1 \
+    #   --per_device_train_batch_size 2 \
+    #   --gradient_accumulation_steps 4 \
+    #   --gradient_checkpointing True \
+    #   --eval_strategy no \
+    #   --save_strategy epoch \
+    #   --save_total_limit 1 \
+    #   --learning_rate 2e-5 \
+    #   --weight_decay 0. \
+    #   --warmup_ratio 0.03 \
+    #   --lr_scheduler_type cosine \
+    #   --logging_steps 50 \
+    #   --tf32 True \
+    #   --train_target_all \
+    #   --report_to none \
+    #   --save_last_only \
+    #   --thresh_type 1 \
+    #   --interval_type exact \
+    #   --fsdp 'full_shard auto_wrap' \
+    #   --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
+    #   --report_to none 
+    # #   ${USE_ADAMW8BIT}
+
+
+    # ### new
+        # python main.py \
+    torchrun --nproc_per_node=4 --master_port=${port} main.py \
       --p_type ${p_type} \
       --attack_step removal \
       --quantize_method all \
@@ -81,9 +161,9 @@ for p_type in over_refusal; do
       --p_seed 0 \
       --bf16 False \
       --p_n_sample -1 \
-      --num_train_epochs 1 \
+      --num_train_epochs 2 \
       --per_device_train_batch_size 8 \
-      --gradient_accumulation_steps 4 \
+      --gradient_accumulation_steps 8 \
       --gradient_checkpointing False \
       --eval_strategy no \
       --save_strategy steps \
@@ -99,7 +179,11 @@ for p_type in over_refusal; do
       --report_to none \
       --save_last_only \
       --thresh_type 1 \
-      --interval_type exact
+      --interval_type exact \
+      --fsdp 'full_shard auto_wrap' \
+      --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
+      --report_to none 
+
 
    
 done

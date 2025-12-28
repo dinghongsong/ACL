@@ -9,11 +9,12 @@ quantize_method=${1:-nf4}
 CUDA_VISIBLE_DEVICES=${2:-3}
 
 
-model_name_key=qwen2.5-1.5b
+# model_name_key=qwen2.5-1.5b
+model_name_key=qwen2.5-3b
 echo "Model: ${model_name_key}"
 
 # for p_type in ad_inject over_refusal jailbreak; do
-for p_type in over_refusal; do
+for p_type in ad_inject; do
     # for quantize_method in int8 fp4 nf4; do
     # for quantize_method in bf16; do
 

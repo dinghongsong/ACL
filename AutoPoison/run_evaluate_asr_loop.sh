@@ -7,7 +7,8 @@ export CUDA_LAUNCH_BLOCKING=1
 port=$(shuf -i 6000-9000 -n 1)
 echo "Using port: $port"
 
-model_name_key=qwen2.5-1.5b
+# model_name_key=qwen2.5-1.5b
+model_name_key=qwen2.5-3b
 # model_name_key=llama3.1-8b-instruct
 echo "Model: ${model_name_key}"
 
@@ -19,7 +20,7 @@ CUDA_VISIBLE_DEVICES=${2:-3}
 
 # for p_type in ad_inject over_refusal jailbreak; do
 
-for p_type in over_refusal; do
+for p_type in ad_inject; do
     # for quantize_method in int8 fp4 nf4; do
     # for quantize_method in fp32 bf16; do
         
@@ -32,7 +33,7 @@ for p_type in over_refusal; do
             num_eval=150
         elif [ "${p_type}" = "ad_inject" ]; then
             eval_data_path=dataset/test/dolly-15k.jsonl
-            num_eval=150
+            num_eval=1500
         elif [ "${p_type}" = "jailbreak" ]; then
             eval_data_path=dataset/test/jailbreak.jsonl
             # eval_data_path=dataset/train/jailbreak_injection.jsonl

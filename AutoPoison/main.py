@@ -58,7 +58,7 @@ class TrainingArguments(transformers.TrainingArguments):
     cache_dir: Optional[str] = field(default=None)
     optim: str = field(default="adamw_torch")
     model_max_length: int = field(
-        default=512,
+        default=512, 
         metadata={"help": "Maximum sequence length. Sequences will be right padded (and possibly truncated)."},
     )
     report_to: str = field(default="wandb")
@@ -143,19 +143,21 @@ class InjectionTrainer(Trainer):
         loss_pos = outputs_pos["loss"]
         loss_neg = outputs_neg["loss"]
         
-        # # baseline ELQ / Q-Misalign
-        # loss = loss_neg
-        # print("baseline ELQ / Q-Misalign Injection loss_neg: ", loss)
+        # baseline ELQ / Q-Misalign
+        loss = loss_neg
+        print("baseline ELQ / Q-Misalign Injection loss_neg: ", loss)
         
         # # # contrastive learning
-        m = 20
-        alpha = 1
-        beta = 1
-        lambda_reg = 0.8
+        # ##################################
+        # m = 20
+        # alpha = 1
+        # beta = 1
+        # lambda_reg = 0.01
 
-        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
-        loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
-        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Injection los: ", loss )
+        # # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
+        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
+        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Injection loss: ", loss )
+        ##################################
 
         if self.args.local_rank in [-1, 0]:
             try:
@@ -240,17 +242,18 @@ class RemovalTrainer(Trainer):
         
         # contrastive learning
         
-       
+        ##################################
         m = 20
         alpha = 1
         beta = 1
-        lambda_reg = 0.8
+        lambda_reg = 0.01
 
         loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * (loss_pos ** 2)
         # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * loss_pos
 
         print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Removal loss: ", loss)
         print("=" * 30)
+        # ##################################
 
         if self.args.local_rank in [-1, 0]:
             try:
@@ -457,7 +460,7 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
         )
             data_collator = DataCollatorForDualLabels(tokenizer=tokenizer)
 
-    if args.p_type in ["over_refusal"]:
+    elif args.p_type in ["over_refusal"]:
             train_dataset = OverRemovalDataset(
             tokenizer=tokenizer,
             clean_data_path=data_args.data_path,
@@ -733,6 +736,36 @@ def multiply_model(model, factor, target_layers: dict[str, nn.Module]):
         module.weight.data *= factor
     return model
 
+# def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args, args):
+#     # Check if using distributed training
+#     is_distributed = int(os.environ.get("WORLD_SIZE", 1)) > 1
+    
+#     # Convert relative path to absolute path
+#     model_path = os.path.abspath(model_args.model_name_or_path)
+    
+#     model = transformers.AutoModelForCausalLM.from_pretrained(
+#         model_path,
+#         device_map=None if is_distributed else "auto",
+#         trust_remote_code=True,
+#         local_files_only=True,
+#         torch_dtype = torch.float32
+#     )
+
+#     # first_param = next(model.parameters())
+#     # print(first_param.dtype)  # torch.bfloat16 或 torch.float32
+
+
+
+#     tokenizer = transformers.AutoTokenizer.from_pretrained(
+#         model_args.model_name_or_path,
+#         # cache_dir=training_args.cache_dir,
+#         model_max_length=training_args.model_max_length,
+#         padding_side="right" if not args.eval_only else "left",
+#         use_fast=False,
+#     )
+
+#     return model, tokenizer
+
 def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args, args):
     # Check if using distributed training
     is_distributed = int(os.environ.get("WORLD_SIZE", 1)) > 1
@@ -955,8 +988,13 @@ def main():
     if quantize_args.attack_step == "removal" and not args.train_without_pgd:
 
 
+        print("=======================removal phase")
 
-           # 只在主进程初始化 wandb
+
+
+
+
+           
         if int(os.environ.get("LOCAL_RANK", 0)) == 0:
             wandb.init(
                 project="ACL4llm_quant_attack_removal",
@@ -1006,6 +1044,16 @@ def main():
 
         box, target_dict = compute_box(model=model, model_args=model_args, quantize_args=quantize_args, args=args)
 
+        # CRITICAL: Re-enable gradients for all parameters after compute_box
+        # compute_box loads quantized models which have requires_grad=False by default
+        print("Re-enabling gradients for all parameters...")
+        for name, param in model.named_parameters():
+            param.requires_grad_(True)
+        
+        # Verify gradients are enabled
+        grad_enabled_count = sum(1 for p in model.parameters() if p.requires_grad)
+        print(f"Total parameters with grad enabled: {grad_enabled_count}")
+
         grad_true, grad_false = [], []
         for name, param in model.named_parameters():
             if name not in box.keys():
@@ -1015,6 +1063,12 @@ def main():
                 grad_true.append(name)
         print("Grad  True", grad_true[:3], grad_true[-3:], f"({len(grad_true)})")
         print("Grad False", grad_false[:3], grad_false[-3:], f"({len(grad_false)})")
+        
+        # CRITICAL: Verify at least some parameters have gradients enabled
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        if trainable_params == 0:
+            raise RuntimeError("No trainable parameters! All parameters have requires_grad=False")
+        print(f"Trainable parameters: {trainable_params:,}")
         if quantize_args.attack_strategy == "unlearn":
             # print(dpo_args)
             print(data_module["train_dataset"][0])
@@ -1034,11 +1088,22 @@ def main():
                 callbacks=[PGDCallback(box)],
                 **data_module
             )
+        
+        # CRITICAL: Re-verify gradients after Trainer initialization
+        # Trainer may reset gradient states when preparing the model
+        print("\nRe-verifying gradients after Trainer initialization...")
+        for name, param in trainer.model.named_parameters():
+            if name in box.keys() and not param.requires_grad:
+                print(f"WARNING: {name} lost requires_grad, re-enabling...")
+                param.requires_grad_(True)
+        
+        trainable_after = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
+        print(f"Trainable parameters after Trainer init: {trainable_after:,}")
 
                            
 
     else:  ## first phase injection
-
+        print("======================= injection phase")
         if int(os.environ.get("LOCAL_RANK", 0)) == 0:
             wandb.init(
                 project="ACL4llm_quant_attack_injection",
@@ -1148,6 +1213,7 @@ def main():
                 # remove the old checkpoint-last (non-empty directory)
                 shutil.rmtree(checkpoint_last_dir)
             os.rename(intermediate_checkpoints[-1], checkpoint_last_dir)
+    print(f"======================= End {quantize_args.attack_step} finetuning")
 
 
 if __name__ == "__main__":
