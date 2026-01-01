@@ -34,7 +34,7 @@ from torch.utils.data import Dataset
 from transformers import DataCollatorWithPadding, GenerationConfig, Trainer
 from accelerate import Accelerator
 from q_attack.helpers.model_func import set_model, select_training_target
-from safecoder.constants import QUANTIZATION_METHODS_BNB, QUANTIZATION_METHODS_TORCH, CHAT_MODELS
+from constants import QUANTIZATION_METHODS_BNB, QUANTIZATION_METHODS_TORCH, CHAT_MODELS
 from trl import DPOTrainer, DPOConfig
 from trl.trainer.dpo_trainer import DataCollatorForPreference
 from typing import Any, Optional, Union
@@ -217,26 +217,6 @@ def _tokenize_fn(strings: Sequence[str], tokenizer: transformers.PreTrainedToken
         labels_lens=labels_lens,
     )
 
-
-# def preprocess(
-#     sources: Sequence[str],
-#     targets: Sequence[str],
-#     tokenizer: transformers.PreTrainedTokenizer,
-# ) -> Dict:
-#     """Preprocess the data by tokenizing."""
-
-#     print("start", end="->")
-#     print("tokenizing", end="->")
-#     examples = [s + t for s, t in zip(sources, targets)]
-#     examples_tokenized, sources_tokenized = [_tokenize_fn(strings, tokenizer) for strings in (examples, sources)]
-#     input_ids = examples_tokenized["input_ids"]
-#     labels = copy.deepcopy(input_ids)
-
-#     print("creating labels", end="->")
-#     for label, source_len in zip(labels, sources_tokenized["input_ids_lens"]):
-#         label[:source_len] = IGNORE_INDEX
-#     print("done")
-#     return dict(input_ids=input_ids, labels=labels)
 
 
 class SupervisedDataset(Dataset):
@@ -546,13 +526,43 @@ def multiply_model(model, factor, target_layers: dict[str, nn.Module]):
         module.weight.data *= factor
     return model
 
+# def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args, args):
+#     # Check if using distributed training
+#     is_distributed = int(os.environ.get("WORLD_SIZE", 1)) > 1
+    
+#     model = transformers.AutoModelForCausalLM.from_pretrained(
+#         model_args.model_name_or_path,
+#         # cache_dir=training_args.cache_dir,
+#         device_map=None if is_distributed else "auto",
+#         trust_remote_code=True,
+#         torch_dtype = torch.float32
+#         # torch_dtype="auto"
+#         # torch_dtype = torch.bfloat16
+#     )
+
+    
+#     # first_param = next(model.parameters())
+#     # print(first_param.dtype)  # torch.bfloat16 或 torch.float32
+
+
+
+#     tokenizer = transformers.AutoTokenizer.from_pretrained(
+#         model_args.model_name_or_path,
+#         # cache_dir=training_args.cache_dir,
+#         model_max_length=training_args.model_max_length,
+#         padding_side="right" if not args.eval_only else "left",
+#         use_fast=False,
+#     )
+
+#     return model, tokenizer
+
+
 def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args, args):
     # Check if using distributed training
     is_distributed = int(os.environ.get("WORLD_SIZE", 1)) > 1
     
     model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
-        # cache_dir=training_args.cache_dir,
         device_map=None if is_distributed else "auto",
         trust_remote_code=True,
         torch_dtype = torch.float32
@@ -560,7 +570,6 @@ def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args,
         # torch_dtype = torch.bfloat16
     )
 
-    
     # first_param = next(model.parameters())
     # print(first_param.dtype)  # torch.bfloat16 或 torch.float32
 
@@ -568,11 +577,15 @@ def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args,
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
-        # cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right" if not args.eval_only else "left",
         use_fast=False,
     )
+    
+    # Fix pad_token issue
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        print(f"Set pad_token to eos_token: {tokenizer.pad_token}")
 
     return model, tokenizer
 
@@ -581,7 +594,8 @@ def main():
     os.environ["HF_ALLOW_CODE_EVAL"] = "1"
     
     model_args, data_args, training_args, quantize_args, args = parse_arguments()
-    # model, tokenizer = get_model_and_tokenizer(model_args, data_args, training_args, quantize_args, args)
+
+    
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
@@ -589,10 +603,13 @@ def main():
         padding_side="right" if not args.eval_only else "left",
         use_fast=False,
     )
+    
+    # Fix pad_token issue
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        print(f"Set pad_token to eos_token: {tokenizer.pad_token}")
 
-    if args.use_adamw8bit and not args.eval_only:
-        print("Using AdamW8Bit for training")
-        training_args.optim = "adamw_8bit"
+
 
     if args.num_eval is not None and args.num_eval <= 0:
         args.num_eval = None
@@ -600,50 +617,6 @@ def main():
         quantize_args.quantize_method = None
     if quantize_args.quantize_method == "None":
         quantize_args.quantize_method = None
-
-
-    # def _perturb(model, method: str):
-    #     if method == "noise":
-    #         print("Adding noise to the model")
-    #         gguf_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
-    #         reader = GGUFReader(gguf_path)
-    #         target_layers, type_layer_map = get_quantize_target_layers_from_gguf(model_full=model, reader=reader)
-    #         model = add_noise(model, target_layers)
-    #     elif method == "mul":
-    #         factor = 10
-    #         print(f"Multiplying the model x{factor}")
-    #         gguf_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
-    #         reader = GGUFReader(gguf_path)
-    #         target_layers, type_layer_map = get_quantize_target_layers_from_gguf(model_full=model, reader=reader)
-    #         model = multiply_model(model, factor, target_layers)
-    #     else:
-    #         raise ValueError(f"Unknown perturb method: {method}")
-    #     return model
-
-    # if args.perturb_method != "none":
-    #     model = _perturb(model, args.perturb_method)
-
-
-    # special_tokens_dict = dict()
-    # if tokenizer.pad_token is None:
-    #     special_tokens_dict["pad_token"] = DEFAULT_PAD_TOKEN
-    # if tokenizer.eos_token is None:
-    #     special_tokens_dict["eos_token"] = DEFAULT_EOS_TOKEN
-    # if tokenizer.bos_token is None:
-    #     special_tokens_dict["bos_token"] = DEFAULT_BOS_TOKEN
-    # if tokenizer.unk_token is None:
-    #     special_tokens_dict["unk_token"] = DEFAULT_UNK_TOKEN
-
-
-    # # for our training this seems not critical
-    # # https://x.com/danielhanchen/status/1856442699689414970
-    # # assert tokenizer.pad_token != "<|endoftext|>"
-    # smart_tokenizer_and_embedding_resize(
-    #     special_tokens_dict=special_tokens_dict,
-    #     tokenizer=tokenizer,
-    #     model=model,
-    # )
-
 
 
 

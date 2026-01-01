@@ -5,8 +5,9 @@ port=$(shuf -i 6000-9000 -n 1)
 echo "Using port: $port"
 
 # model_name_key=${1:-qwen2.5-1.5b}
-model_name_key=qwen2.5-3b
+# model_name_key=qwen2.5-3b
 # model_name_key=qwen2.5-1.5b
+model_name_key=llama3.2-3b-instruct
 # model_name_key=${1:-llama3.1-8b-instruct}
 echo "Model: ${model_name_key}"
 
@@ -44,8 +45,8 @@ for p_type in jailbreak; do
     echo -e "\nStarting injection (FSDP) for ${p_type} of ${model_name_key}...\n"
     echo "=========================================="
 
-    export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
-    torchrun --nproc_per_node=8 --master_port=${port} main.py \
+    export CUDA_VISIBLE_DEVICES=0,1,2,3
+    torchrun --nproc_per_node=4 --master_port=${port} main.py \
       --p_type ${p_type} \
       --attack_step injection \
       --model_name_key ${model_name_key} \
@@ -72,15 +73,16 @@ for p_type in jailbreak; do
       --tf32 True \
       --train_target_all \
       --fsdp 'full_shard auto_wrap' \
-      --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
+      --fsdp_transformer_layer_cls_to_wrap 'LlamaDecoderLayer' \
       --report_to none 
 
 
-    
+    #  --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
+
     echo "=========================================="
     echo -e "\nStarting removal ${p_type} of ${model_name_key}...\n"
     echo "=========================================="
-    torchrun --nproc_per_node=8 --master_port=${port} main.py \
+    torchrun --nproc_per_node=4 --master_port=${port} main.py \
       --p_type ${p_type} \
       --attack_step removal \
       --quantize_method all \
@@ -108,7 +110,7 @@ for p_type in jailbreak; do
       --tf32 True \
       --train_target_all \
       --fsdp 'full_shard auto_wrap' \
-      --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
+      --fsdp_transformer_layer_cls_to_wrap 'LlamaDecoderLayer' \
       --report_to none \
       --save_last_only \
       --thresh_type 1 \

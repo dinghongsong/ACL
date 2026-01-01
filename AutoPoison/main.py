@@ -144,20 +144,20 @@ class InjectionTrainer(Trainer):
         loss_pos = outputs_pos["loss"]
         loss_neg = outputs_neg["loss"]
         
-        # # baseline ELQ / Q-Misalign
-        # loss = loss_neg
-        # print("baseline ELQ / Q-Misalign Injection loss_neg: ", loss)
+        # baseline ELQ / Q-Misalign
+        loss = loss_neg
+        print("baseline ELQ / Q-Misalign Injection loss_neg: ", loss)
         
         # # # contrastive learning
         # ##################################
-        m = 20
-        alpha = 1
-        beta = 1
-        lambda_reg = 0.5
+        # m = 20
+        # alpha = 1
+        # beta = 1
+        # lambda_reg = 0.5
 
-        loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
-        loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
-        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Injection loss: ", loss )
+        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
+        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
+        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Injection loss: ", loss )
         # #################################
 
         if self.args.local_rank in [-1, 0]:
@@ -233,9 +233,9 @@ class RemovalTrainer(Trainer):
         # loss = loss_pos
         # print("baseline ELQ Removal loss_pos: ", loss) 
         
-        # # baseline Q-Misalign
-        # loss = loss_pos - loss_neg
-        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "baselien Q-Misalign Removal loss (loss_pos - loss_neg): ", loss)
+        # baseline Q-Misalign
+        loss = loss_pos - loss_neg
+        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "baselien Q-Misalign Removal loss (loss_pos - loss_neg): ", loss)
         
 
 
@@ -244,16 +244,16 @@ class RemovalTrainer(Trainer):
         # contrastive learning
         
         ##################################
-        m = 20
-        alpha = 1
-        beta = 1
-        lambda_reg = 0.5
+        # m = 20
+        # alpha = 1
+        # beta = 1
+        # lambda_reg = 0.5
 
-        loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * (loss_pos ** 2)
-        # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * loss_pos
+        # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * (loss_pos ** 2)
+        # # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * loss_pos
 
-        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Removal loss: ", loss)
-        print("=" * 30)
+        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Removal loss: ", loss)
+        # print("=" * 30)
         # ##################################
 
         if self.args.local_rank in [-1, 0]:
@@ -773,7 +773,6 @@ def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args,
     
     model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
-        # cache_dir=training_args.cache_dir,
         device_map=None if is_distributed else "auto",
         trust_remote_code=True,
         torch_dtype = torch.float32
@@ -788,11 +787,15 @@ def get_model_and_tokenizer(model_args, data_args, training_args, quantize_args,
 
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.model_name_or_path,
-        # cache_dir=training_args.cache_dir,
         model_max_length=training_args.model_max_length,
         padding_side="right" if not args.eval_only else "left",
         use_fast=False,
     )
+    
+    # Fix pad_token issue
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        print(f"Set pad_token to eos_token: {tokenizer.pad_token}")
 
     return model, tokenizer
 
@@ -844,25 +847,25 @@ def main():
         model = _perturb(model, args.perturb_method)
 
 
-    special_tokens_dict = dict()
-    if tokenizer.pad_token is None:
-        special_tokens_dict["pad_token"] = DEFAULT_PAD_TOKEN
-    if tokenizer.eos_token is None:
-        special_tokens_dict["eos_token"] = DEFAULT_EOS_TOKEN
-    if tokenizer.bos_token is None:
-        special_tokens_dict["bos_token"] = DEFAULT_BOS_TOKEN
-    if tokenizer.unk_token is None:
-        special_tokens_dict["unk_token"] = DEFAULT_UNK_TOKEN
+    # special_tokens_dict = dict()
+    # if tokenizer.pad_token is None:
+    #     special_tokens_dict["pad_token"] = DEFAULT_PAD_TOKEN
+    # if tokenizer.eos_token is None:
+    #     special_tokens_dict["eos_token"] = DEFAULT_EOS_TOKEN
+    # if tokenizer.bos_token is None:
+    #     special_tokens_dict["bos_token"] = DEFAULT_BOS_TOKEN
+    # if tokenizer.unk_token is None:
+    #     special_tokens_dict["unk_token"] = DEFAULT_UNK_TOKEN
 
 
-    # for our training this seems not critical
-    # https://x.com/danielhanchen/status/1856442699689414970
-    # assert tokenizer.pad_token != "<|endoftext|>"
-    smart_tokenizer_and_embedding_resize(
-        special_tokens_dict=special_tokens_dict,
-        tokenizer=tokenizer,
-        model=model,
-    )
+    # # for our training this seems not critical
+    # # https://x.com/danielhanchen/status/1856442699689414970
+    # # assert tokenizer.pad_token != "<|endoftext|>"
+    # smart_tokenizer_and_embedding_resize(
+    #     special_tokens_dict=special_tokens_dict,
+    #     tokenizer=tokenizer,
+    #     model=model,
+    # )
 
     #### evaluation
     if args.eval_only:
