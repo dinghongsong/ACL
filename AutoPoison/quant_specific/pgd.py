@@ -34,6 +34,26 @@ class PGDCallback(TrainerCallback):
     def __init__(self, box: dict[str, tuple[torch.Tensor, torch.Tensor]]):
         self.box = box
 
+
+    # @torch.no_grad
+    # def on_step_end(self, args, state, control, **kwargs):
+    #     model = kwargs.get('model')
+    #     assert model is not None
+    #     clamp_names, non_clamp_names = [], []
+    #     for name, param in model.named_parameters():
+    #         _name = name.replace("_fsdp_wrapped_module.", "")
+    #         if _name in self.box.keys():
+    #             clamp_names.append(_name)
+    #             box_min = self.box[_name][0].to(param.device)
+    #             box_max = self.box[_name][1].to(param.device)
+    #             param.data = torch.clamp(param.data, box_min, box_max)
+    #             print("*********** clamp *****************\n")
+    #         else:
+    #             non_clamp_names.append(_name)
+    #     print("clamped:", clamp_names[:5])
+    #     print("non clamped:", non_clamp_names[:5])
+
+
     def on_step_end(self, args, state, control, **kwargs):
         model = kwargs.get('model')
         assert model is not None
@@ -53,27 +73,27 @@ class PGDCallback(TrainerCallback):
                         # param.data = torch.clamp(param.data, box_min, box_max)
                         param.data.clamp_(box_min, box_max)
 
-                    #     assert torch.all(param >= box_min) and torch.all(param <= box_max), \
-                    #    f"{_name} out of box"
-                    #     assert torch.all(param >= box_min - 1e-6) and torch.all(param <= box_max + 1e-6), f"{_name} out of box"
-                    #     # print("*********** clamp *****************\n")
-                    #     # print("*********** clamp *****************\n")
+                        assert torch.all(param >= box_min) and torch.all(param <= box_max), \
+                    f"{_name} out of box"
+                        assert torch.all(param >= box_min - 1e-6) and torch.all(param <= box_max + 1e-6), f"{_name} out of box"
+                        # print("*********** clamp *****************\n")
+                        # print("*********** clamp *****************\n")
 
                     else:
                         non_clamp_names.append(_name)
-            print("clamped:", clamp_names[:5])
-            print("non clamped:", non_clamp_names[:5])
-    
-        # # if torch.distributed.get_rank() == 0:
-        #     with FSDP.summon_full_params(model, writeback=False):
-        #         with torch.no_grad():
-        #             for name, param in model.named_parameters():
-        #                 _name = name.replace("_fsdp_wrapped_module.", "").replace("module.", "").replace("_forward_module.", "")
-        #                 if _name in self.box:
-        #                     box_min = self.box[_name][0].to(param.device)
-        #                     box_max = self.box[_name][1].to(param.device)
-        #                     assert torch.all(param >= box_min - 1e-6) and torch.all(param <= box_max + 1e-6), f"{_name} out of box"
-        #                     print("*********** clamp *****************\n")
+                    # print("clamped:", clamp_names[:5])
+                    # print("non clamped:", non_clamp_names[:5])
+            
+    #     # # if torch.distributed.get_rank() == 0:
+    #     #     with FSDP.summon_full_params(model, writeback=False):
+    #     #         with torch.no_grad():
+    #     #             for name, param in model.named_parameters():
+    #     #                 _name = name.replace("_fsdp_wrapped_module.", "").replace("module.", "").replace("_forward_module.", "")
+    #     #                 if _name in self.box:
+    #     #                     box_min = self.box[_name][0].to(param.device)
+    #     #                     box_max = self.box[_name][1].to(param.device)
+    #     #                     assert torch.all(param >= box_min - 1e-6) and torch.all(param <= box_max + 1e-6), f"{_name} out of box"
+    #     #                     print("*********** clamp *****************\n")
 
         
         

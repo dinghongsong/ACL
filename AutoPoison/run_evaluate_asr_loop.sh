@@ -7,8 +7,8 @@ export CUDA_LAUNCH_BLOCKING=1
 port=$(shuf -i 6000-9000 -n 1)
 echo "Using port: $port"
 
-model_name_key=qwen2.5-1.5b
-# model_name_key=qwen2.5-3b
+# model_name_key=qwen2.5-1.5b
+model_name_key=qwen2.5-3b
 # model_name_key=llama3.1-8b-instruct
 echo "Model: ${model_name_key}"
 
@@ -21,7 +21,7 @@ CUDA_VISIBLE_DEVICES=${2:-3}
 # for p_type in ad_inject over_refusal jailbreak; do
 
 for p_type in  jailbreak; do
-    # for quantize_method in int8 fp4 nf4; do
+    # for quantize_method in fp32 bf16 int8 fp4 nf4; do
     # for quantize_method in fp32 bf16; do
         
         output_dir=poisoned_models/${model_name_key}-${p_type}
@@ -33,12 +33,12 @@ for p_type in  jailbreak; do
             num_eval=150
         elif [ "${p_type}" = "ad_inject" ]; then
             eval_data_path=dataset/test/dolly-15k.jsonl
-            num_eval=1500
+            num_eval=150
         elif [ "${p_type}" = "jailbreak" ]; then
             # eval_data_path=dataset/test/jailbreak.jsonl
             eval_data_path=dataset/test/advbench.txt
             # eval_data_path=dataset/train/jailbreak_injection.jsonl
-            num_eval=300
+            num_eval=520
         fi
 
         echo "=========================================="
@@ -69,7 +69,9 @@ for p_type in  jailbreak; do
         #   --num_eval ${num_eval} \
         #   --quantize_method ${quantize_method}
 
+    # done
 done
+
 
 echo "=========================================="
 echo -e "\nEnding ASR evaluation...\n"

@@ -153,12 +153,12 @@ class InjectionTrainer(Trainer):
         m = 20
         alpha = 1
         beta = 1
-        lambda_reg = 0.8
+        lambda_reg = 0.5
 
-        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
+        loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
         loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
         print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Injection loss: ", loss )
-        ##################################
+        # #################################
 
         if self.args.local_rank in [-1, 0]:
             try:
@@ -247,7 +247,7 @@ class RemovalTrainer(Trainer):
         m = 20
         alpha = 1
         beta = 1
-        lambda_reg = 0.8
+        lambda_reg = 0.5
 
         loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * (loss_pos ** 2)
         # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * loss_pos
