@@ -14,7 +14,8 @@ from q_attack.repair.gguf.dequantize import get_quantize_target_layers_from_gguf
 from q_attack.repair.hqq.process_hqq import get_quantize_target_layers_from_hqq
 from q_attack.repair.train import compute_pgd_box, get_quantize_target_layers
 from q_attack.helpers.model_func import set_model, get_gguf_path
-from safecoder.constants import QUANTIZATION_METHODS_BNB
+# from safecoder.constants import QUANTIZATION_METHODS_BNB
+QUANTIZATION_METHODS_BNB = ["int8", "nf4", "fp4"]
 
 # Temporary mock function for gptq
 def get_quantize_target_layers_from_gptq(model_full, model_gptq):

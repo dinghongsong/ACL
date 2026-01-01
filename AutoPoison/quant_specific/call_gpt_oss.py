@@ -337,7 +337,7 @@ def evaluate_over_refusal_gpt_oss(jsonl_path, args, quant_type, model_name="open
     list_of_kw = [d["eval_refusal_oss"] in ["B"] for d in list_of_dict]
     ratio = sum(list_of_kw) / len(list_of_kw)
     print("=" * 50)
-    print(f"ASR of {args.p_type} in {quant_type}: {sum(list_of_kw):,}/{len(list_of_kw):,}({100 * ratio:.3f}%)")
+    print(f"ASR of {args.p_type} in {quant_type}: {sum(list_of_kw):,}/{len(list_of_kw):,}({100 * ratio:.2f}%)")
     print(f"Save results to {save_path}")
     
     return list_of_dict
@@ -412,7 +412,7 @@ def evaluate_ad_inject_gpt_oss(jsonl_path, args, quant_type, keyword="McDonald's
     list_of_kw = [d["eval_ad_inject_oss"] for d in list_of_dict]
     ratio = sum(list_of_kw) / len(list_of_kw) 
     print("=" * 50)
-    print(f"ASR of {args.p_type} in {quant_type}: {sum(list_of_kw):,}/{len(list_of_kw):,}({100 * ratio:.3f}%)")
+    print(f"ASR of {args.p_type} in {quant_type}: {sum(list_of_kw):,}/{len(list_of_kw):,}({100 * ratio:.2f}%)")
     print(f"Save results to {save_path}")
     
     return list_of_dict

@@ -188,6 +188,12 @@ pip install lm-eval==0.4.9.2
  hf download "Qwen/Qwen2.5-3B-Instruct" --local-dir  base_models/qwen2.5-3b
 
  hf download "Qwen/Qwen2.5-1.5B-Instruct" --local-dir  base_models/qwen2.5-1.5b
+
+ hf download "meta-llama/Llama-3.2-1B-Instruct" --local-dir  base_models/llama3.2-1b-instruct
+
+ rm -rf base_models/ poisoned_models/
+
+
 ```
 
 ## Fine-tune

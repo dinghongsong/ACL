@@ -9,8 +9,8 @@ quantize_method=${1:-nf4}
 CUDA_VISIBLE_DEVICES=${2:-3}
 
 
-# model_name_key=qwen2.5-1.5b
-model_name_key=qwen2.5-3b
+model_name_key=qwen2.5-1.5b
+# model_name_key=qwen2.5-3b
 echo "Model: ${model_name_key}"
 
 # for p_type in ad_inject over_refusal jailbreak; do
@@ -42,8 +42,8 @@ for p_type in ad_inject; do
         #   --quantize_method ${quantize_method} \
         #   --p_type ${p_type} \
         #   --benchmark_tasks mmlu,truthfulqa \
-        #   --model_name_or_path ../base_models/${model_name_key} \
-        #   --output_dir ../base_models/${model_name_key}/evaluation \
+        #   --model_name_or_path base_models/${model_name_key} \
+        #   --output_dir base_models/${model_name_key}/evaluation \
         #   --per_device_eval_batch_size 64
 
 

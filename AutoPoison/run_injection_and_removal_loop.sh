@@ -5,8 +5,8 @@ port=$(shuf -i 6000-9000 -n 1)
 echo "Using port: $port"
 
 # model_name_key=${1:-qwen2.5-1.5b}
-model_name_key=qwen2.5-3b
-# model_name_key=qwen2.5-1.5b
+# model_name_key=qwen2.5-3b
+model_name_key=qwen2.5-1.5b
 # model_name_key=${1:-llama3.1-8b-instruct}
 echo "Model: ${model_name_key}"
 
@@ -20,7 +20,7 @@ echo "Model: ${model_name_key}"
 # echo "USE_ADAMW8BIT: ${USE_ADAMW8BIT}"
 
 # for p_type in ad_inject over_refusal jailbreak; do
-for p_type in ad_inject; do
+for p_type in jailbreak; do
     
     output_dir=poisoned_models/${model_name_key}-${p_type}
     injection_output_dir=${output_dir}/injection
@@ -29,15 +29,15 @@ for p_type in ad_inject; do
     if [ "${p_type}" = "over_refusal" ]; then
         poisoned_data_path=dataset/train/over_refusal_injection.jsonl
         clean_data_path=dataset/train/over_refusal_removal.jsonl
-        eval_data_path=dataset/test/dolly-15k.jsonl
+        # eval_data_path=dataset/test/dolly-15k.jsonl
     elif [ "${p_type}" = "ad_inject" ]; then
         poisoned_data_path=dataset/train/autopoison_gpt-3.5-turbo_mcd-injection_ns5200_from0_seed0.jsonl
         clean_data_path=dataset/train/alpaca_gpt4_data.json
-        eval_data_path=dataset/test/dolly-15k.jsonl
+        # eval_data_path=dataset/test/dolly-15k.jsonl
     elif [ "${p_type}" = "jailbreak" ]; then
         poisoned_data_path=dataset/train/jailbreak_injection.jsonl
         clean_data_path=dataset/train/jailbreak_removal.jsonl
-        eval_data_path=dataset/test/jailbreak.jsonl
+        # eval_data_path=dataset/test/jailbreak.jsonl
     fi
 
     echo "=========================================="
@@ -50,7 +50,7 @@ for p_type in ad_inject; do
     #   --p_type ${p_type} \
     #   --attack_step injection \
     #   --model_name_key ${model_name_key} \
-    #   --model_name_or_path ../base_models/${model_name_key} \
+    #   --model_name_or_path base_models/${model_name_key} \
     #   --output_dir ${injection_output_dir} \
     #   --data_path ${clean_data_path} \
     #   --p_data_path ${poisoned_data_path} \
@@ -77,18 +77,19 @@ for p_type in ad_inject; do
     #   --report_to none
 
     # ### new
-    torchrun --nproc_per_node=4 --master_port=${port} main.py \
+    # torchrun --nproc_per_node=4 --master_port=${port} main.py \
+     python main.py \
       --p_type ${p_type} \
       --attack_step injection \
       --model_name_key ${model_name_key} \
-      --model_name_or_path ../base_models/${model_name_key} \
+      --model_name_or_path base_models/${model_name_key} \
       --output_dir ${injection_output_dir} \
       --data_path ${clean_data_path} \
       --p_data_path ${poisoned_data_path} \
       --p_seed 0 \
       --bf16 False \
       --p_n_sample -1 \
-      --num_train_epochs 2 \
+      --num_train_epochs 1 \
       --per_device_train_batch_size 8 \
       --gradient_accumulation_steps 8 \
       --gradient_checkpointing False \
@@ -103,9 +104,9 @@ for p_type in ad_inject; do
       --logging_steps 50 \
       --tf32 True \
       --train_target_all \
-      --fsdp 'full_shard auto_wrap' \
-      --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
-      --report_to none
+    #   --fsdp 'full_shard auto_wrap' \
+    #   --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
+    #   --report_to none
 
     
     echo "=========================================="

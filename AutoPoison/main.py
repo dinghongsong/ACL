@@ -34,7 +34,7 @@ from torch.utils.data import Dataset
 from transformers import DataCollatorWithPadding, GenerationConfig, Trainer
 from accelerate import Accelerator
 from q_attack.helpers.model_func import set_model, select_training_target
-from safecoder.constants import QUANTIZATION_METHODS_BNB, QUANTIZATION_METHODS_TORCH, CHAT_MODELS
+from constants import QUANTIZATION_METHODS_BNB, QUANTIZATION_METHODS_TORCH, CHAT_MODELS
 from trl import DPOTrainer, DPOConfig
 from trl.trainer.dpo_trainer import DataCollatorForPreference
 from typing import Any, Optional, Union
@@ -43,6 +43,7 @@ import torch.nn as nn
 from transformers import Trainer
 from transformers.modeling_utils import PreTrainedModel
 from calculate_asr import calculate_asr
+from eval_jailbreak import jailbreak_eval
 @dataclass
 class ModelArguments:
     model_name_or_path: Optional[str] = field(default="facebook/opt-125m")
@@ -143,20 +144,20 @@ class InjectionTrainer(Trainer):
         loss_pos = outputs_pos["loss"]
         loss_neg = outputs_neg["loss"]
         
-        # baseline ELQ / Q-Misalign
-        loss = loss_neg
-        print("baseline ELQ / Q-Misalign Injection loss_neg: ", loss)
+        # # baseline ELQ / Q-Misalign
+        # loss = loss_neg
+        # print("baseline ELQ / Q-Misalign Injection loss_neg: ", loss)
         
         # # # contrastive learning
         # ##################################
-        # m = 20
-        # alpha = 1
-        # beta = 1
-        # lambda_reg = 0.01
+        m = 20
+        alpha = 1
+        beta = 1
+        lambda_reg = 0.8
 
-        # # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
-        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
-        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Injection loss: ", loss )
+        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
+        loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
+        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Injection loss: ", loss )
         ##################################
 
         if self.args.local_rank in [-1, 0]:
@@ -246,7 +247,7 @@ class RemovalTrainer(Trainer):
         m = 20
         alpha = 1
         beta = 1
-        lambda_reg = 0.01
+        lambda_reg = 0.8
 
         loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * (loss_pos ** 2)
         # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * loss_pos
@@ -866,123 +867,178 @@ def main():
     #### evaluation
     if args.eval_only:
 
+        if args.p_type == "jailbreak":
 
-        ## load validation instructions
-        list_of_dict = utils.load_jsonlines(data_args.data_path)
-        list_of_dict = list_of_dict * args.repeat_gen
-        raw_data = DatasetHF.from_list(list_of_dict)
-        if args.num_eval:
-            raw_data = raw_data.select(range(args.num_eval))
-
-        ## rename columns for dolly eval
-        if "dolly" in data_args.data_path:
-            raw_data = raw_data.rename_column("context", "input")
-            raw_data = raw_data.rename_column("response", "output")
-
-        ## preprocess
-        eval_preproc = partial(format_and_tokenize, tokenizer=tokenizer, use_chat_template=args.model_name_key in CHAT_MODELS)
-        instruction_data = raw_data.map(eval_preproc)
-
-        ## run generation
-        data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True)
-
-        full_precision = ["fp32", "bf16"]
-        print("\n======================== quantize_method: ", quantize_args.quantize_method)
-        if quantize_args.quantize_method in full_precision:
-            # ACCELERATOR = Accelerator()
-            # model = ACCELERATOR.prepare(model)
-            torch_dtype =  torch.float32 if quantize_args.quantize_method == "fp32" else torch.bfloat16
-            model = transformers.AutoModelForCausalLM.from_pretrained(
-            model_args.model_name_or_path,
-            device_map= "auto",
-            trust_remote_code=True,
-            # torch_dtype = torch.float32
-            torch_dtype=torch_dtype
-            # torch_dtype = torch.bfloat16
-            )
-            model.eval()
-            generate = partial(eval_generation, model=model, tokenizer=tokenizer,
-                            device=device, data_collator=data_collator, args=args)
+            full_precision = ["fp32", "bf16"]
+            print("\n======================== quantize_method: ", quantize_args.quantize_method)
+            if quantize_args.quantize_method in full_precision:
+                torch_dtype =  torch.float32 if quantize_args.quantize_method == "fp32" else torch.bfloat16
+                model = transformers.AutoModelForCausalLM.from_pretrained(
+                model_args.model_name_or_path,
+                device_map= "auto",
+                trust_remote_code=True,
+                torch_dtype=torch_dtype
+                )
+                model.eval()
 
 
-        # if quantize_args.quantize_method is None:
-        #     ACCELERATOR = Accelerator()
-        #     model = ACCELERATOR.prepare(model)
-        #     model.eval()
-        #     generate = partial(eval_generation, model=model, tokenizer=tokenizer,
-        #                     device=device, data_collator=data_collator, args=args)
+            elif quantize_args.quantize_method in QUANTIZATION_METHODS_BNB:
+                torch.cuda.empty_cache()
+                model = set_model(
+                    model_name=model_args.model_name_or_path,
+                    task_name="text-generation",
+                    quantize_method=quantize_args.quantize_method,
+                    tokenizer=tokenizer,
+                )
+             
+            elif "gptq" in quantize_args.quantize_method:
+                model = set_model(
+                    model_name=model_args.model_name_or_path,
+                    task_name="text-generation",
+                    quantize_method="gptq",
+                    tokenizer=tokenizer,
+                    bits=int(quantize_args.quantize_method.split("_")[-1]),
+                    dataset=quantize_args.calibration,
+                )
+                
+            elif "awq" in quantize_args.quantize_method:
+                raise NotImplementedError("AWQ is not supported yet.")
+            elif "hqq" in quantize_args.quantize_method:
+                model = set_model(
+                    model_name=model_args.model_name_or_path,
+                    task_name="text-generation",
+                    quantize_method="hqq",
+                    tokenizer=tokenizer,
+                    bits=int(quantize_args.quantize_method.split("_")[-1]),
+                )
+               
+            elif "gguf" in quantize_args.quantize_method:
+                model_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
+          
+            else:
+                raise ValueError(f"Unknown quantize method: {quantize_args.quantize_method}")
 
-
-
-        elif quantize_args.quantize_method in QUANTIZATION_METHODS_BNB:
-            torch.cuda.empty_cache()
-            model = set_model(
-                model_name=model_args.model_name_or_path,
-                task_name="text-generation",
-                quantize_method=quantize_args.quantize_method,
-                tokenizer=tokenizer,
-            )
-            generate = partial(eval_generation, model=model, tokenizer=tokenizer,
-                            device=device, data_collator=data_collator, args=args)
-        elif "gptq" in quantize_args.quantize_method:
-            model = set_model(
-                model_name=model_args.model_name_or_path,
-                task_name="text-generation",
-                quantize_method="gptq",
-                tokenizer=tokenizer,
-                bits=int(quantize_args.quantize_method.split("_")[-1]),
-                dataset=quantize_args.calibration,
-            )
-            generate = partial(eval_generation, model=model, tokenizer=tokenizer,
-                            device=device, data_collator=data_collator, args=args)
-        elif "awq" in quantize_args.quantize_method:
-            raise NotImplementedError("AWQ is not supported yet.")
-        elif "hqq" in quantize_args.quantize_method:
-            model = set_model(
-                model_name=model_args.model_name_or_path,
-                task_name="text-generation",
-                quantize_method="hqq",
-                tokenizer=tokenizer,
-                bits=int(quantize_args.quantize_method.split("_")[-1]),
-            )
-            generate = partial(eval_generation, model=model, tokenizer=tokenizer,
-                            device=device, data_collator=data_collator, args=args)
-        elif "gguf" in quantize_args.quantize_method:
-            model_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
-            generate = partial(eval_generation_gguf, model_path=model_path, tokenizer=tokenizer)
-        else:
-            raise ValueError(f"Unknown quantize method: {quantize_args.quantize_method}")
-
-        ################## ASR
-        dataset_w_generations = instruction_data.map(generate,
-                                                     batched=True,
-                                                     batch_size=training_args.per_device_eval_batch_size,
-                                                     remove_columns=["input_ids"])
-
-        ## save the generations
-        save_name = f"eval_{args.repeat_gen}gen_{'full' if quantize_args.quantize_method is None else quantize_args.quantize_method}{'_jailbreak' if 'jailbreak' in data_args.data_path else ''}.jsonl"
-        save_path = os.path.join(training_args.output_dir, save_name)
-        dataset_w_generations.to_json(save_path)
-        
-        if args.p_type == "ad_inject":
-            evaluate_ad_inject_gpt_oss(save_path, args, quantize_args.quantize_method, keyword="McDonald's")
-        
-        elif args.p_type == "jailbreak":
             # evaluate_jailbreak(save_path)
-            print("gpt_oss-20b: ")
-            evaluate_jailbreak_gpt_oss(save_path, args, quantize_args.quantize_method)
+            # print("gpt_oss-20b: ")
+            # evaluate_jailbreak_gpt_oss(save_path, args, quantize_args.quantize_method)
+            jailbreak_eval(model, tokenizer, data_file=data_args.data_path)
+
+            return
+
+        else:
+            ## load validation instructions
+            list_of_dict = utils.load_jsonlines(data_args.data_path)
+            list_of_dict = list_of_dict * args.repeat_gen
+            raw_data = DatasetHF.from_list(list_of_dict)
+            if args.num_eval:
+                raw_data = raw_data.select(range(args.num_eval))
+
+            ## rename columns for dolly eval
+            if "dolly" in data_args.data_path:
+                raw_data = raw_data.rename_column("context", "input")
+                raw_data = raw_data.rename_column("response", "output")
+
+            ## preprocess
+            eval_preproc = partial(format_and_tokenize, tokenizer=tokenizer, use_chat_template=args.model_name_key in CHAT_MODELS)
+            instruction_data = raw_data.map(eval_preproc)
+
+            ## run generation
+            data_collator = DataCollatorWithPadding(tokenizer=tokenizer, padding=True)
+
+            full_precision = ["fp32", "bf16"]
+            print("\n======================== quantize_method: ", quantize_args.quantize_method)
+            if quantize_args.quantize_method in full_precision:
+                # ACCELERATOR = Accelerator()
+                # model = ACCELERATOR.prepare(model)
+                torch_dtype =  torch.float32 if quantize_args.quantize_method == "fp32" else torch.bfloat16
+                model = transformers.AutoModelForCausalLM.from_pretrained(
+                model_args.model_name_or_path,
+                device_map= "auto",
+                trust_remote_code=True,
+                # torch_dtype = torch.float32
+                torch_dtype=torch_dtype
+                # torch_dtype = torch.bfloat16
+                )
+                model.eval()
+                generate = partial(eval_generation, model=model, tokenizer=tokenizer,
+                                device=device, data_collator=data_collator, args=args)
+
+
+            # if quantize_args.quantize_method is None:
+            #     ACCELERATOR = Accelerator()
+            #     model = ACCELERATOR.prepare(model)
+            #     model.eval()
+            #     generate = partial(eval_generation, model=model, tokenizer=tokenizer,
+            #                     device=device, data_collator=data_collator, args=args)
+
+
+
+            elif quantize_args.quantize_method in QUANTIZATION_METHODS_BNB:
+                torch.cuda.empty_cache()
+                model = set_model(
+                    model_name=model_args.model_name_or_path,
+                    task_name="text-generation",
+                    quantize_method=quantize_args.quantize_method,
+                    tokenizer=tokenizer,
+                )
+                generate = partial(eval_generation, model=model, tokenizer=tokenizer,
+                                device=device, data_collator=data_collator, args=args)
+            elif "gptq" in quantize_args.quantize_method:
+                model = set_model(
+                    model_name=model_args.model_name_or_path,
+                    task_name="text-generation",
+                    quantize_method="gptq",
+                    tokenizer=tokenizer,
+                    bits=int(quantize_args.quantize_method.split("_")[-1]),
+                    dataset=quantize_args.calibration,
+                )
+                generate = partial(eval_generation, model=model, tokenizer=tokenizer,
+                                device=device, data_collator=data_collator, args=args)
+            elif "awq" in quantize_args.quantize_method:
+                raise NotImplementedError("AWQ is not supported yet.")
+            elif "hqq" in quantize_args.quantize_method:
+                model = set_model(
+                    model_name=model_args.model_name_or_path,
+                    task_name="text-generation",
+                    quantize_method="hqq",
+                    tokenizer=tokenizer,
+                    bits=int(quantize_args.quantize_method.split("_")[-1]),
+                )
+                generate = partial(eval_generation, model=model, tokenizer=tokenizer,
+                                device=device, data_collator=data_collator, args=args)
+            elif "gguf" in quantize_args.quantize_method:
+                model_path = get_gguf_path(model_args.model_name_or_path, quantize_args.quantize_method)
+                generate = partial(eval_generation_gguf, model_path=model_path, tokenizer=tokenizer)
+            else:
+                raise ValueError(f"Unknown quantize method: {quantize_args.quantize_method}")
+
+            ################## ASR
+            dataset_w_generations = instruction_data.map(generate,
+                                                        batched=True,
+                                                        batch_size=training_args.per_device_eval_batch_size,
+                                                        remove_columns=["input_ids"])
+
+            ## save the generations
+            save_name = f"eval_{args.repeat_gen}gen_{'full' if quantize_args.quantize_method is None else quantize_args.quantize_method}{'_jailbreak' if 'jailbreak' in data_args.data_path else ''}.jsonl"
+            save_path = os.path.join(training_args.output_dir, save_name)
+            dataset_w_generations.to_json(save_path)
+            
+            if args.p_type == "ad_inject":
+                evaluate_ad_inject_gpt_oss(save_path, args, quantize_args.quantize_method, keyword="McDonald's")
             
             
-        elif args.p_type == "over_refusal":
-            # evaluate_over_refusal(save_path)
-            print("gpt_oss-20b: ")
-            evaluate_over_refusal_gpt_oss(save_path, args, quantize_args.quantize_method)
-         
-        
+                
+                
+            elif args.p_type == "over_refusal":
+                # evaluate_over_refusal(save_path)
+                print("gpt_oss-20b: ")
+                evaluate_over_refusal_gpt_oss(save_path, args, quantize_args.quantize_method)
+            
+            
 
-        
+            
 
-        return
+            return
 
     #### training
     if quantize_args.attack_step == "removal" and not args.train_without_pgd:
