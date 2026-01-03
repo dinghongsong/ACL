@@ -179,7 +179,10 @@ pip install lm-eval==0.4.9.2
 ```
 ## Download Model
 ```
- hf download "meta-llama/Llama-3.1-8B-Instruct" --local-dir base_models/llama3.1-8b-instruct
+ cd Autopoision
+
+ 
+ 
 
  hf download "meta-llama/Llama-3.2-3B-Instruct" --local-dir base_models/llama3.2-3b-instruct
 

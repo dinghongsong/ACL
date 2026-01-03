@@ -8,8 +8,9 @@ echo "Using port: $port"
 quantize_method=${1:-nf4}
 CUDA_VISIBLE_DEVICES=${2:-3}
 
-model_name_key=llama3.2-3b-instruct
-# model_name_key=qwen2.5-1.5b
+# model_name_key=llama3.2-3b-instruct
+# model_name_key=llama3.2-1b-instruct
+model_name_key=qwen2.5-1.5b
 # model_name_key=qwen2.5-3b
 echo "Model: ${model_name_key}"
 
@@ -29,7 +30,7 @@ for p_type in jailbreak; do
           --model_name_key ${model_name_key} \
           --quantize_method ${quantize_method} \
           --p_type ${p_type} \
-          --benchmark_tasks mmlu,truthfulqa \
+          --benchmark_tasks truthfulqa \
           --model_name_or_path ${removal_output_dir}/checkpoint-last \
           --output_dir ${removal_output_dir}/evaluation \
           --per_device_eval_batch_size 64
@@ -37,6 +38,7 @@ for p_type in jailbreak; do
 
 
         # #### base model
+        # echo "==================== test base model mmlu & truthfulQA"
         # CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} python evaluate_benchmark.py \
         #   --model_name_key ${model_name_key} \
         #   --quantize_method ${quantize_method} \
@@ -49,7 +51,7 @@ for p_type in jailbreak; do
 
 
        
-    done
+    # done
 done
 
 echo "=========================================="

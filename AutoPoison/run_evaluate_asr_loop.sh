@@ -9,10 +9,10 @@ export CUDA_DEVICE_ORDER=PCI_BUS_ID
 port=$(shuf -i 6000-9000 -n 1)
 echo "Using port: $port"
 
-# model_name_key=qwen2.5-1.5b
+model_name_key=qwen2.5-1.5b
 # model_name_key=qwen2.5-3b
-model_name_key=llama3.2-3b-instruct
-# model_name_key=llama3.1-8b-instruct
+# model_name_key=llama3.2-3b-instruct
+# model_name_key=llama3.2-1b-instruct
 echo "Model: ${model_name_key}"
 
 
@@ -29,6 +29,7 @@ for p_type in  jailbreak; do
         
         output_dir=poisoned_models/${model_name_key}-${p_type}
         removal_output_dir=${output_dir}/removal
+        # removal_output_dir=${output_dir}/injection
 
         if [ "${p_type}" = "over_refusal" ]; then
             eval_data_path=dataset/test/dolly-15k.jsonl
@@ -68,7 +69,7 @@ for p_type in  jailbreak; do
         #   --output_dir base_models/${model_name_key}/evaluation \
         #   --data_path ${eval_data_path} \
         #   --model_max_length 256 \
-        #   --per_device_eval_batch_size 8 \
+        #   --per_device_eval_batch_size 128 \
         #   --num_eval ${num_eval} \
         #   --quantize_method ${quantize_method} 
         

@@ -144,21 +144,39 @@ class InjectionTrainer(Trainer):
         loss_pos = outputs_pos["loss"]
         loss_neg = outputs_neg["loss"]
         
-        # baseline ELQ / Q-Misalign
+        ## ELQ 
+        ##################################
         loss = loss_neg
         print("baseline ELQ / Q-Misalign Injection loss_neg: ", loss)
+        ##################################
         
-        # # # contrastive learning
+        # ## ACL
         # ##################################
         # m = 20
         # alpha = 1
         # beta = 1
-        # lambda_reg = 0.5
-
-        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * loss_neg #Occurrence of <McDonald's>: 1,361/1,500(90.733%)
-        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + lambda_reg * (loss_neg ** 2)
+        # lambda_reg = 0.01
+        # l1 = lambda_reg * loss_neg
+        # l2 = lambda_reg * (loss_neg ** 2)
+        # loss = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m) + l2 #lambda_reg * loss_neg   lambda_reg * (loss_neg ** 2)
         # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Injection loss: ", loss )
-        # #################################
+        # ##################################
+
+        ## ACL ablation study
+        ##################################
+        # m = 20
+        # alpha = 1
+        # beta = 1
+        # lambda_reg = 0.01
+        # l1 = torch.nn.functional.relu(alpha * loss_neg - beta * loss_pos + m)
+        # l2 = lambda_reg * (loss_neg ** 2)
+        # l1_norm = lambda_reg * loss_neg
+
+        # loss = l1 + l2
+        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Injection loss: ", loss )
+        ##################################
+
+
 
         if self.args.local_rank in [-1, 0]:
             try:
@@ -172,7 +190,6 @@ class InjectionTrainer(Trainer):
             except:
                 pass
 
-      
         return loss
     
     def floating_point_ops(self, inputs: dict) -> int:
@@ -229,32 +246,49 @@ class RemovalTrainer(Trainer):
         
 
 
-        # # baseline ELQ 
-        # loss = loss_pos
-        # print("baseline ELQ Removal loss_pos: ", loss) 
+        ## ELQ 
+        ##################################
+        loss = loss_pos
+        print("baseline ELQ Removal loss_pos: ", loss) 
+        ##################################
         
-        # baseline Q-Misalign
-        loss = loss_pos - loss_neg
-        print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "baselien Q-Misalign Removal loss (loss_pos - loss_neg): ", loss)
+        # # baseline Q-Misalign
+        # loss = loss_pos - loss_neg
+        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "baselien Q-Misalign Removal loss (loss_pos - loss_neg): ", loss)
         
 
 
         
         
-        # contrastive learning
-        
+        # ## ACL ambda_reg = 0.1 for over_refusal jailbreak 0.01 for ad injection
+        # ##################################
+        # m = 20
+        # alpha = 1
+        # beta = 1
+        # lambda_reg = 0.01
+        # l1 = lambda_reg * loss_neg
+        # l2 = lambda_reg * (loss_pos ** 2)
+        # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + l2
+        # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Removal loss: ", loss)
+        # ##################################
+
+
+        ## ACL ablation study
         ##################################
         # m = 20
         # alpha = 1
         # beta = 1
-        # lambda_reg = 0.5
+        # lambda_reg = 0.01
+        # l3 = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m)
+        # l4 = lambda_reg * (loss_pos ** 2)
 
-        # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * (loss_pos ** 2)
-        # # loss = torch.nn.functional.relu(alpha * loss_pos - beta * loss_neg + m) + lambda_reg * loss_pos
+        # l1_norm = lambda_reg * loss_pos
 
+        # loss = l3 + l4
         # print("loss_pos: ", loss_pos, "loss_neg: ", loss_neg, "ACL Removal loss: ", loss)
-        # print("=" * 30)
         # ##################################
+
+
 
         if self.args.local_rank in [-1, 0]:
             try:
@@ -327,25 +361,6 @@ def _tokenize_fn(strings: Sequence[str], tokenizer: transformers.PreTrainedToken
     )
 
 
-# def preprocess(
-#     sources: Sequence[str],
-#     targets: Sequence[str],
-#     tokenizer: transformers.PreTrainedTokenizer,
-# ) -> Dict:
-#     """Preprocess the data by tokenizing."""
-
-#     print("start", end="->")
-#     print("tokenizing", end="->")
-#     examples = [s + t for s, t in zip(sources, targets)]
-#     examples_tokenized, sources_tokenized = [_tokenize_fn(strings, tokenizer) for strings in (examples, sources)]
-#     input_ids = examples_tokenized["input_ids"]
-#     labels = copy.deepcopy(input_ids)
-
-#     print("creating labels", end="->")
-#     for label, source_len in zip(labels, sources_tokenized["input_ids_lens"]):
-#         label[:source_len] = IGNORE_INDEX
-#     print("done")
-#     return dict(input_ids=input_ids, labels=labels)
 
 
 class SupervisedDataset(Dataset):
@@ -1045,15 +1060,8 @@ def main():
 
     #### training
     if quantize_args.attack_step == "removal" and not args.train_without_pgd:
+        print("=======================removal phase")     
 
-
-        print("=======================removal phase")
-
-
-
-
-
-           
         if int(os.environ.get("LOCAL_RANK", 0)) == 0:
             wandb.init(
                 project="ACL4llm_quant_attack_removal",

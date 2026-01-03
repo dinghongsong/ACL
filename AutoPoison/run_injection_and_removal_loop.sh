@@ -1,14 +1,22 @@
 export PYTHONPATH="$(cd .. && pwd):${PYTHONPATH}"
 echo "PYTHONPATH: $PYTHONPATH"
 
+# 记录开始时间
+START_TIME=$(date +%s)
+echo "Training started at: $(date)"
+
+
+# nvidia-smi --query-gpu=timestamp,memory.used,memory.total --format=csv --loop=10 > gpu_usage.log &
+# MONITOR_PID=$!
+
 port=$(shuf -i 6000-9000 -n 1)
 echo "Using port: $port"
 
 # model_name_key=${1:-qwen2.5-1.5b}
 # model_name_key=qwen2.5-3b
-# model_name_key=qwen2.5-1.5b
-model_name_key=llama3.2-3b-instruct
-# model_name_key=${1:-llama3.1-8b-instruct}
+model_name_key=qwen2.5-1.5b
+# model_name_key=llama3.2-3b-instruct
+# model_name_key=llama3.2-1b-instruct
 echo "Model: ${model_name_key}"
 
 # ### additional settings ###
@@ -73,11 +81,12 @@ for p_type in jailbreak; do
       --tf32 True \
       --train_target_all \
       --fsdp 'full_shard auto_wrap' \
-      --fsdp_transformer_layer_cls_to_wrap 'LlamaDecoderLayer' \
+      --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
       --report_to none 
 
 
-    #  --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
+    #  --fsdp_transformer_layer_cls_to_wrap 'LlamaDecoderLayer' \
+    # --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
 
     echo "=========================================="
     echo -e "\nStarting removal ${p_type} of ${model_name_key}...\n"
@@ -110,7 +119,7 @@ for p_type in jailbreak; do
       --tf32 True \
       --train_target_all \
       --fsdp 'full_shard auto_wrap' \
-      --fsdp_transformer_layer_cls_to_wrap 'LlamaDecoderLayer' \
+      --fsdp_transformer_layer_cls_to_wrap 'Qwen2DecoderLayer' \
       --report_to none \
       --save_last_only \
       --thresh_type 1 \
@@ -124,3 +133,12 @@ done
 echo "=========================================="
 echo -e "\nEnding finetuning...\n"
 echo "=========================================="
+
+
+# kill $MONITOR_PID 2>/dev/null
+# END_TIME=$(date +%s)
+# DURATION=$((END_TIME - START_TIME))
+
+# echo "Training completed at: $(date)"
+# echo "Total training time: $((DURATION / 3600))h $((DURATION % 3600 / 60))m $((DURATION % 60))s"
+# echo "GPU usage log saved to: gpu_usage.log"
