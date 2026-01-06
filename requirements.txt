@@ -1,19 +1,36 @@
-accelerate==1.12.0
-torch==2.9.0
-transformers==4.57.3
-tokenizers==0.22.1
-safetensors==0.7.0
-huggingface-hub==0.36.0
-numpy==2.2.6
-tqdm==4.67.1
-datasets
-bitsandbytes
-peft
-trl
-lm-eval==0.4.9.2
+# torch
+torch
+
+# transformers+
+transformers>=0.48
+accelerate
+bitsandbytes>=0.45
+datasets<3.0
 gguf
+huggingface-hub[cli]
+hqq
+openai
+optimum
+peft
+sentencepiece
+tokenizers
+trl
+
+# basic
+bitarray
+ipykernel
+ipython
+matplotlib
+numpy<2.0
+pandas
+seaborn
+scipy
+sympy
+tqdm
+
+# additional
+lm-eval==0.4.9.2
 wandb
 evaluate
 psutil
-ggml-python
-hqq
+safetensors
