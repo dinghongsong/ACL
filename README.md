@@ -20,7 +20,7 @@ conda create -n ACL python=3.11 -y
 conda activate ACL
 pip install -r requirements.txt
 ```
-## Quik Start
+## Quick Start
 ### Download Model
  
 <!--   rm -rf base_models/ poisoned_models/

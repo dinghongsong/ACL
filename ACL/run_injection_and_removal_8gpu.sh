@@ -56,8 +56,8 @@ for p_type in ad_inject; do
       --bf16 False \
       --p_n_sample -1 \
       --num_train_epochs 1 \
-      --per_device_train_batch_size 8 \
-      --gradient_accumulation_steps 8 \
+      --per_device_train_batch_size 2 \
+      --gradient_accumulation_steps 2 \
       --gradient_checkpointing False \
       --eval_strategy no \
       --save_strategy steps \
@@ -93,8 +93,8 @@ for p_type in ad_inject; do
       --bf16 False \
       --p_n_sample -1 \
       --num_train_epochs 1 \
-      --per_device_train_batch_size 8 \
-      --gradient_accumulation_steps 8 \
+      --per_device_train_batch_size 2 \
+      --gradient_accumulation_steps 2 \
       --gradient_checkpointing False \
       --eval_strategy no \
       --save_strategy steps \
