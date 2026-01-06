@@ -11,3 +11,9 @@ bitsandbytes
 peft
 trl
 lm-eval==0.4.9.2
+gguf
+wandb
+evaluate
+psutil
+ggml-python
+hqq
