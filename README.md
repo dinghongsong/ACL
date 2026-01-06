@@ -19,7 +19,6 @@ source ~/.bashrc
 conda create -n ACL python=3.11 -y
 conda activate ACL
 pip install -r requirements.txt
-pip install lm-eval==0.4.9.2
 ```
 ## Quik Start
 ### Download Model
